@@ -36,7 +36,8 @@
       solution: ['買う前に、\n使う頻度をチェック。', '買う前に、使う頻度と予算を確認。', '買う前に使用頻度と予算を確認。普段のケアに組み込めるかも見てみましょう。', '買う前に使用頻度と予算を確認。普段のケアに組み込めるかも見てみましょう。分からない組み合わせは推測せず、メーカーへ確認する選択もあります。']
     }
   };
-  function topicFor(theme) {
+  function topicFor(theme, genre = '') {
+    if (genre && !/美容|スキンケア/.test(genre)) return 'manual';
     const t = clean(theme, 70);
     if (/薬|病|更年期|ホルモン|治療|診断|湿疹|アレルギー|アトピー/.test(t)) return 'manual';
     if (/老け|年齢|エイジング|鏡/.test(t) && !/保湿|美容液/.test(t)) return 'aging';
@@ -48,7 +49,7 @@
     const v = {...defaults, ...input};
     v.theme = clean(v.theme, 70); v.target = clean(v.target, 70);
     v.duration = [15, 30, 60].includes(Number(v.duration)) ? Number(v.duration) : 30;
-    v.purpose = ['save', 'follow', 'comment', 'inform'].includes(v.purpose) ? v.purpose : 'save';
+    v.purpose = ['save', 'follow', 'comment', 'inform', 'visit', 'reserve', 'menu'].includes(v.purpose) ? v.purpose : 'save';
     if (!hookKeys.includes(v.hookType)) v.hookType = defaults.hookType;
     if (!['knowledge', 'solution', 'experience', 'product'].includes(v.postType)) v.postType = defaults.postType;
     if (!['none', 'PR', '広告', '商品提供'].includes(v.adDisclosure)) v.adDisclosure = 'none';
@@ -56,20 +57,21 @@
     return v;
   }
   function hooks(input) {
-    const o = options(input), topic = topicFor(o.theme);
+    const o = options(input), topic = topicFor(o.theme, o.genre);
     let captions = topics[topic]?.hooks || ['［確認済み情報の意外な点を入力］', '［視聴者が実際に困る場面を入力］', '［この投稿で答える疑問を入力］'];
     if (o.postType === 'experience') captions = ['［実体験で意外だった点を入力］', '［実際に困った場面を入力］', '［実体験で確かめたかったことを入力］'];
     if (o.postType === 'product') captions = ['買う前に、\n表示をひとつ確認。', '選ぶ基準、\n増えすぎてない？', 'この商品、\nどこを見て選ぶ？'];
     return hookKeys.map((id, i) => ({id, label: hookLabels[i], caption: captions[i], narration: captions[i].replace(/\n/g, '')}));
   }
   function closing(o, t) {
+    if (['visit', 'reserve', 'menu'].includes(o.purpose)) return {caption: o.brandCta || '［来店・予約・メニューの案内を入力］', narration: o.brandCta || '［確認済みの案内を入力してください］'};
     if (o.purpose === 'comment') return {caption: t?.question || 'あなたが知りたいことを、\nコメントで教えてください。', narration: t?.question || 'このテーマで、あなたが知りたいことは何ですか。よかったらコメントで教えてください。'};
     if (o.purpose === 'follow') return {caption: `${t?.follow || '頑張らない美容'}を、\nこれからも一緒に。`, narration: `${t?.follow || '無理のない美容'}を、これからも。よかったらフォローを。`};
     if (o.purpose === 'inform') return {caption: 'できそうなことを、\nひとつ選んでみて。', narration: '今日の内容から、できそうなことをひとつ選んでみてください。'};
     return {caption: `${t?.save || '今回の内容を見直す日に'}、\n保存しておこう。`, narration: `${t?.save || '今回の内容を見直すメモに'}、保存しておいてください。`};
   }
   function generate(input) {
-    const o = options(input), key = topicFor(o.theme), t = topics[key], candidates = hooks(o), selected = candidates.find(h => h.id === o.hookType), level = o.duration === 15 ? 1 : o.duration === 60 ? 3 : 2;
+    const o = options(input), key = topicFor(o.theme, o.genre), t = topics[key], candidates = hooks(o), selected = candidates.find(h => h.id === o.hookType), level = o.duration === 15 ? 1 : o.duration === 60 ? 3 : 2;
     let middle, notice = t ? `「${t.name}」の編集用テンプレートです。個別の効果や診断を示すものではありません。` : 'このテーマは定型文の対象外です。確認済み情報を入力し、未入力箇所をご自身で編集してください。';
     if (t) {
       const empathy = [...t.empathy];

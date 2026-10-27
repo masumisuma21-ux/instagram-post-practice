@@ -22,7 +22,7 @@ const initial = {
     {title: '美容は、自分の\nペースでいい。', body: '肌の様子を見る・使用方法を確認する\nこすらず、心地よく続ける。\n\nあとで見返せるように保存を。\n無理のない美容を、一緒に。\nよかったらフォローしてください。'}
   ].map(s => ({...s, ...textDefaults, photo: null}))
 };
-let state = clone(initial), current = 0, db = null, saveTimer, revision = 0;
+let state = clone(initial), current = 0, db = null, saveTimer, revision = 0, pendingFeedLoads = 0, feedDirty = false;
 let saveQueue = Promise.resolve(), lastSaveOK = true, fontsReady;
 const images = new Map();
 const measure = document.createElement('canvas').getContext('2d');
@@ -63,47 +63,41 @@ function confirmAction(message, title = '内容を確認してください') {
     $('#acceptAction').onclick = () => dialog.close('yes'); dialog.showModal();
   });
 }
-function openDatabase() {
-  return new Promise(resolve => {
-    try {
-      const request = indexedDB.open('tsumugu-beauty', 1);
-      request.onupgradeneeded = () => request.result.createObjectStore('posts', {keyPath: 'id'});
-      request.onsuccess = () => { db = request.result; db.onversionchange = () => { db.close(); db = null; }; resolve(); };
-      request.onerror = request.onblocked = () => resolve();
-    } catch { resolve(); }
-  });
+async function openDatabase() { await AccountWorkspace.ready; }
+function storage(op, value, accountId = AccountWorkspace.currentId) { return AccountWorkspace.store('feed', op, value, accountId); }
+function brandFeedDefault(brand = AccountWorkspace.brand) {
+  const next = clone(initial); next.concept = brand.name.slice(0, 36); next.account = '';
+  [next.bg, next.fg, next.accent] = brand.colors; next.font = brand.font; next.template = brand.template;
+  if (!/美容|スキンケア/.test(brand.genre)) {
+    next.theme = brand.name + 'のご案内';
+    const labels = ['［投稿タイトルを入力］', '［お店・サービスの紹介］', '［確認済みの特徴を入力］', '［メニューなどの情報を入力］', '［利用時に伝えたいことを入力］', '［来店・予約などの手順を入力］', '［まとめの見出しを入力］'];
+    next.slides = labels.map((title, i) => ({...clone(initial.slides[i]), title, body: i === 6 ? brand.cta : '［確認できる情報を入力してください］', photo: null}));
+  } else next.slides[6].body = brand.cta || next.slides[6].body;
+  return normalize(next);
 }
-// Every write resolves only after its transaction commits, so quota errors are visible.
-function storage(op, value) {
-  if (!db) {
-    return Promise.resolve().then(() => {
-      const key = 'tsumugu-beauty-fallback';
-      const records = JSON.parse(localStorage.getItem(key) || '{}');
-      if (op === 'get') return records[value];
-      if (op === 'all') return Object.values(records);
-      if (op === 'put') records[value.id] = value;
-      if (op === 'delete') delete records[value];
-      localStorage.setItem(key, JSON.stringify(records));
-    });
-  }
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('posts', ['get', 'all'].includes(op) ? 'readonly' : 'readwrite');
-    const store = tx.objectStore('posts');
-    const request = op === 'all' ? store.getAll() : store[op](value);
-    tx.oncomplete = () => resolve(request.result);
-    tx.onerror = tx.onabort = () => reject(tx.error || Error('保存できませんでした。'));
-  });
+async function prepareFeedAccount(id, brand) {
+  const saved = await storage('get', 'autosave', id), pending = AccountWorkspace.recovery('feed', id);
+  const source = pending && (!saved || (pending.updated || 0) > (saved.updated || 0)) ? pending : saved;
+  const next = source ? normalize(source.state) : brandFeedDefault(brand);
+  await prepareImages(next); return next;
+}
+function activateFeedAccount(next) {
+  clearTimeout(saveTimer); revision++; feedDirty = false; state = next; current = 0;
+  const used = new Set(state.slides.filter(s => s.photo).map(s => s.photo.data)); for (const key of images.keys()) if (!used.has(key)) images.delete(key);
+  fields(); syncGlobalControls(); syncPageControls(); render(); $('#draftName').value = ''; $('#draftList').replaceChildren();
+  storageStatus('アカウントの投稿を表示中'); if (!$('#drafts').hidden) listDrafts();
 }
 function storageStatus(text, error = false) {
   $('#saveState').textContent = text; $('#saveState').classList.toggle('error', error);
 }
 function persist() {
   clearTimeout(saveTimer);
-  const snapshot = clone(state), capturedRevision = revision;
+  const snapshot = clone(state), capturedRevision = revision, ownerId = AccountWorkspace.currentId, snapshotAt = Date.now();
   saveQueue = saveQueue.catch(() => {}).then(async () => {
     try {
-      await storage('put', {id: 'autosave', state: snapshot, updated: Date.now()}); lastSaveOK = true;
-      if (capturedRevision === revision) storageStatus('● このブラウザに自動保存済み');
+      await storage('put', {id: 'autosave', state: snapshot, updated: snapshotAt}, ownerId); lastSaveOK = true;
+      AccountWorkspace.clearRecovery('feed', snapshotAt, ownerId);
+      if (capturedRevision === revision && ownerId === AccountWorkspace.currentId) { feedDirty = false; storageStatus('● このブラウザに自動保存済み'); }
     } catch {
       lastSaveOK = false; storageStatus('保存できません。空き容量を確認してください', true);
       toast('ブラウザに保存できませんでした。大切な投稿はPNGで保存してください。');
@@ -112,7 +106,7 @@ function persist() {
   return saveQueue;
 }
 function update() {
-  revision++; storageStatus('保存中…'); clearTimeout(saveTimer); saveTimer = setTimeout(persist, 500); render();
+  revision++; feedDirty = true; storageStatus('保存中…'); clearTimeout(saveTimer); saveTimer = setTimeout(persist, 500); render();
 }
 async function flush() { await persist(); return lastSaveOK; }
 function setTab(tab) {
@@ -268,14 +262,17 @@ async function imageFrom(data) {
 }
 async function prepareImages(model) { await Promise.all(model.slides.filter(s => s.photo).map(s => imageFrom(s.photo.data))); }
 async function replaceState(model) {
+  pendingFeedLoads++;
+  try {
   const next = normalize(model); await prepareImages(next); state = next; current = 0; revision++;
   fields(); syncGlobalControls(); syncPageControls(); render(); await persist();
+  } finally { pendingFeedLoads--; }
 }
 async function uploadPhoto(file, target) {
   if (!file) return;
   const targetSlide = state.slides[target];
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) { toast('12MB以下のJPG・PNG・WebPを選んでください。'); return; }
-  let objectURL;
+  let objectURL; pendingFeedLoads++;
   try {
     objectURL = URL.createObjectURL(file); const img = new Image(); img.src = objectURL; await img.decode();
     if (img.naturalWidth * img.naturalHeight > 40000000) throw Error('写真が大きすぎます。縮小してから選んでください。');
@@ -288,7 +285,7 @@ async function uploadPhoto(file, target) {
     state.slides[target].photo = {data, name: file.name, width: Math.min(350, Math.floor(photoImage.width / photoImage.height * 440)), x: 96, y: 66, layout: 'side'};
     syncPageControls(); update(); toast(`${target + 1}枚目に写真を追加しました。`);
   } catch (error) { toast(error.message.startsWith('写真が') ? error.message : '写真を読み込めませんでした。別の写真を選んでください。'); }
-  finally { if (objectURL) URL.revokeObjectURL(objectURL); $('#photoFile').value = ''; }
+  finally { pendingFeedLoads--; if (objectURL) URL.revokeObjectURL(objectURL); $('#photoFile').value = ''; }
 }
 // Curated outlines only: user text selects a topic; efficacy claims are never interpolated.
 function outline(theme) {
@@ -348,9 +345,10 @@ function outline(theme) {
   ];
 }
 async function listDrafts() {
-  const list = $('#draftList');
+  const list = $('#draftList'), ownerId = AccountWorkspace.currentId;
   try {
     const records = (await storage('all')).filter(r => r.id !== 'autosave').sort((a, b) => b.updated - a.updated);
+    if (ownerId !== AccountWorkspace.currentId) return;
     list.replaceChildren();
     if (!records.length) { const p = document.createElement('p'); p.className = 'empty-drafts'; p.textContent = 'まだ保存した投稿はありません。\n名前を付けて、最初の1件を残しましょう。'; list.append(p); }
     for (const record of records) {
@@ -360,7 +358,7 @@ async function listDrafts() {
       const open = document.createElement('button'); open.textContent = '開いて再編集';
       open.onclick = async () => {
         if (!await confirmAction('現在の編集内容をこの投稿に切り替えます。現在の投稿も残したい場合は、先に名前を付けて保存してください。', '保存した投稿を開く')) return;
-        try { await flush(); await replaceState(record.state); $('#draftName').value = record.name; setTab('content'); toast('保存した投稿を開きました。'); }
+        try { if (!await flush()) { toast('現在の投稿を保存できないため、読み込みを中止しました。'); return; } await replaceState(record.state); $('#draftName').value = record.name; setTab('content'); toast('保存した投稿を開きました。'); }
         catch { toast('投稿を開けませんでした。保存データを確認してください。'); }
       };
       const remove = document.createElement('button'); remove.textContent = '削除';
@@ -457,9 +455,9 @@ function bind() {
   $('#photoBottom').onclick = () => { const p = state.slides[current].photo; if (!p) return; const img = images.get(p.data); Object.assign(p, {layout: 'bottom', width: Math.min(510, Math.floor(img.width / img.height * 420)), x: 50, y: 100}); syncPageControls(); update(); };
   $('#removePhoto').onclick = () => { state.slides[current].photo = null; syncPageControls(); update(); toast('このページの写真を削除しました。'); };
   $('#generate').onclick = async () => {
-    if (!state.theme.trim()) { toast('美容テーマを入力してください。'); $('#theme').focus(); return; }
+    if (!state.theme.trim()) { toast('投稿テーマを入力してください。'); $('#theme').focus(); return; }
     if (!await confirmAction('7枚の見出しと本文を構成案に置き換えます。写真・色・文字設定はそのままです。今の文章を残したい場合は、先に名前を付けて保存してください。', '7枚の構成案をつくる')) return;
-    outline(state.theme).forEach((s, i) => Object.assign(state.slides[i], s)); fields(); setPage(0); update();
+    (/美容|スキンケア/.test(AccountWorkspace.brand.genre) ? outline(state.theme) : brandFeedDefault().slides.map((s, i) => ({title: i === 0 ? state.theme : s.title, body: s.body}))).forEach((s, i) => Object.assign(state.slides[i], s)); fields(); setPage(0); update();
     toast('定型文から構成案を作成しました。内容を確認して編集してください。');
   };
   $('#saveDraft').onclick = async () => {
@@ -473,29 +471,28 @@ function bind() {
   };
   $('#newPost').onclick = async () => {
     if (!await confirmAction('サンプルから新しい投稿をはじめます。今の投稿を残したい場合は、先に名前を付けて保存してください。', '新しい投稿')) return;
-    await flush(); await replaceState(initial); $('#draftName').value = ''; setTab('content'); toast('新しい投稿をはじめました。');
+    if (!await flush()) { toast('保存に失敗したため新規作成を中止しました。'); return; } await replaceState(brandFeedDefault()); $('#draftName').value = ''; setTab('content'); toast('新しい投稿をはじめました。');
   };
   $('#individual').onclick = () => exportImages('png', false); $('#download').onclick = () => exportImages('png', true);
   $('#svgDownload').onclick = () => exportImages('svg', false); $('#svgAll').onclick = () => exportImages('svg', true);
   document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
-  // Best-effort synchronous recovery for closing the tab before the debounce commits.
-  window.addEventListener('pagehide', () => { try { localStorage.setItem('tsumugu-beauty-recovery', JSON.stringify({state, updated: Date.now()})); } catch {} });
+  const emergencyFeed = () => AccountWorkspace.recover('feed', {id: 'autosave', state: clone(state), updated: Date.now()});
+  window.addEventListener('beforeunload', event => { if ((feedDirty || !lastSaveOK) && !emergencyFeed()) { event.preventDefault(); event.returnValue = ''; } });
+  window.addEventListener('pagehide', () => { if (feedDirty || !lastSaveOK) emergencyFeed(); persist(); });
 }
 async function boot() {
   $('.editor').inert = true;
   fontsReady = Promise.all([document.fonts.load('24px JP'), document.fonts.load('24px JPSerif')]);
   await openDatabase();
-  try {
-    const auto = await storage('get', 'autosave');
-    const recovery = JSON.parse(localStorage.getItem('tsumugu-beauty-recovery') || 'null');
-    const source = recovery && (!auto || recovery.updated > auto.updated) ? recovery : auto;
-    const legacy = !source && JSON.parse(localStorage.getItem('tsumugu-v1') || 'null');
-    if (source?.state || legacy) state = normalize(source?.state || legacy);
-    await prepareImages(state);
-  } catch { toast('保存データの読み込みに失敗しました。サンプルで開きます。'); state = clone(initial); }
+  state = await prepareFeedAccount(AccountWorkspace.currentId, AccountWorkspace.brand);
   bind(); syncGlobalControls(); syncPageControls(); render(); $('.editor').inert = false;
   await persist();
-  if (lastSaveOK) { try { localStorage.removeItem('tsumugu-beauty-recovery'); } catch {} }
+  AccountWorkspace.register('feed', {
+    flush, busy: () => exporting || pendingFeedLoads > 0,
+    prepare: prepareFeedAccount, activate: activateFeedAccount,
+    snapshot: () => ({id: 'autosave', state: clone(state), updated: Date.now()}),
+    open: record => replaceState(record.state), validate: record => normalize(record.state)
+  });
   fontsReady.then(render).catch(() => toast('日本語フォントを読み込めませんでした。再読み込みしてください。'));
 }
-boot().catch(() => { storageStatus('起動に失敗しました。再読み込みしてください', true); });
+boot().catch(error => { storageStatus('保存データを読み込めないため停止しました。元データは削除していません。', true); AccountWorkspace.fail(error); });

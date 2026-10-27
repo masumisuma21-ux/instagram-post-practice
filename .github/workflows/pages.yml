@@ -21,7 +21,7 @@ jobs:
       - name: Prepare only website files
         run: |
           mkdir _site
-          cp index.html style.css app.js reels.js reels.css reel-script-templates.js sans.woff serif.woff FONT-LICENSE.txt .nojekyll _site/
+          cp index.html accounts.js accounts.css style.css app.js reels.js reels.css reel-script-templates.js sans.woff serif.woff FONT-LICENSE.txt .nojekyll _site/
       - uses: actions/configure-pages@v5
         with:
           enablement: true

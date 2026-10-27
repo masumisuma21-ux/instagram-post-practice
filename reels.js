@@ -7,28 +7,68 @@
   const durationSets = {15: [3, 3, 3, 3, 3], 30: [3, 6, 7, 8, 6], 60: [3, 12, 17, 18, 10]};
   const defaultStyle = {font: 'sans', bg: '#f8f5ec', color: '#435445', band: '#f8f5ec', size: 64, y: 60, align: 'center', animation: 'fade'};
   let model = {...Scripts.defaults, scriptTemplateVersion: 1, theme: '忙しい朝の保湿ケア', target: '忙しい30代後半〜50代の女性', duration: 30, purpose: 'save', style: {...defaultStyle}, scenes: [], narration: null, bgm: null, bgmConsent: false, license: '', volume: .2};
-  let selected = 0, time = 0, playing = false, frameID, startTime, timer, database, revision = 0, writeQueue = Promise.resolve(), busy = false, server = false;
+  let selected = 0, time = 0, playing = false, frameID, startTime, timer, database, revision = 0, writeQueue = Promise.resolve(), busy = false, server = false, lastReelSaveOK = true, pendingReelLoads = 0, reelDirty = false;
   const cache = new Map(), voice = new Audio(), music = new Audio(); music.loop = true;
   const canvas = q('rCanvas'), ctx = canvas.getContext('2d');
   const surface = document.createElement('canvas'); surface.width = 1080; surface.height = 1920; const surfaceContext = surface.getContext('2d');
   function drafts(settings) {
-    return Scripts.generate(settings).scenes.map((s, i) => ({...s, image: null, imageName: '', prompt: imagePrompt(i)}));
+    return Scripts.generate(settings).scenes.map((s, i) => ({...s, image: null, imageName: '', prompt: imagePrompt(i, settings.genre)}));
   }
-  function imagePrompt(index) {
+  function imagePrompt(index, genre = model.genre) {
+    if (genre && !/美容|スキンケア/.test(genre)) return `${genre}向けの写真。シーン${index + 1}：実在する商品・店内・手元など、投稿内容に合う素材を用意してください。温かい自然光と余白。未確認の料理・価格・設備は作りません。`;
     const settings = ['アイボリーの洗面台に置いた美容液と柔らかな朝の光', '忙しい朝、30〜40代女性の自然な後ろ姿。顔は写さない', '30〜40代女性がスキンケア商品を手に取る手元のクローズアップ', '美容液を手のひらに出す自然な所作。顔は画角の外', 'ベージュのリネンとスキンケア商品、穏やかな暮らしの一場面'];
     return `リアルで上品な美容写真。${settings[index]}。温かいベージュ・アイボリー、自然光、余白を広く。9:16の縦長。商品ロゴ・文字・透かしなし。過度な肌補正やビフォーアフター表現なし。実在人物の再現なし。`;
   }
   model.scenes = drafts(model);
+  const initialReel = structuredClone(model);
   const total = () => model.scenes.reduce((sum, s) => sum + Number(s.seconds), 0);
   function which(t) { let start = 0; for (let i = 0; i < model.scenes.length; i++) { if (t < start + model.scenes[i].seconds || i === 4) return {index: i, start, local: Math.max(0, t - start)}; start += model.scenes[i].seconds; } }
   const clock = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-  function openDB() { return new Promise((resolve, reject) => { const r = indexedDB.open('tsumugu-reels', 1); r.onupgradeneeded = () => r.result.createObjectStore('data', {keyPath: 'id'}); r.onsuccess = () => { database = r.result; resolve(); }; r.onerror = () => reject(r.error); r.onblocked = () => reject(Error('保存先を開けません')); }); }
-  function store(op, value) { return new Promise((resolve, reject) => { if (!database) return reject(Error('保存先が使えません')); const tx = database.transaction('data', ['get', 'getAll'].includes(op) ? 'readonly' : 'readwrite'), request = tx.objectStore('data')[op](value); tx.oncomplete = () => resolve(request.result); tx.onerror = tx.onabort = () => reject(tx.error); }); }
-  function persist() {
-    clearTimeout(timer); const copy = structuredClone(model), savedRevision = revision;
-    writeQueue = writeQueue.catch(() => {}).then(async () => { try { await store('put', {id: 'current', value: copy}); if (savedRevision === revision) q('rSaveStatus').textContent = '● リールをこのブラウザに保存済み'; } catch { q('rSaveStatus').textContent = '保存できません。空き容量・設定を確認してください'; } }); return writeQueue;
+  async function openDB() { await AccountWorkspace.ready; }
+  function store(op, value, accountId = AccountWorkspace.currentId) { return AccountWorkspace.store('reel', op, value, accountId); }
+  function brandReelDefault(brand = AccountWorkspace.brand) {
+    const next = structuredClone(initialReel); next.genre = brand.genre; next.brandName = brand.name; next.brandCta = brand.cta;
+    next.target = brand.target.slice(0, 70); next.style = {...defaultStyle, bg: brand.colors[0], color: brand.colors[1], band: brand.colors[0], font: brand.font};
+    next.purpose = /来店/.test(brand.purpose) ? 'visit' : /予約/.test(brand.purpose) ? 'reserve' : /メニュー/.test(brand.purpose) ? 'menu' : /フォロー/.test(brand.purpose) ? 'follow' : 'save';
+    if (!/美容|スキンケア/.test(brand.genre)) next.theme = brand.name + 'の紹介';
+    next.scenes = drafts(next); return next;
   }
-  function change() { revision++; q('rSaveStatus').textContent = '保存中…'; clearTimeout(timer); timer = setTimeout(persist, 350); draw(); updateTime(); updateScriptWarnings(); }
+  async function prepareReelAccount(id, brand) {
+    const saved = await store('get', 'current', id), pending = AccountWorkspace.recovery('reel', id);
+    const source = pending && (!saved || (pending.updated || 0) > (saved.updated || 0)) ? pending : saved;
+    const next = source ? normalize(source.value) : brandReelDefault(brand);
+    next.genre ||= brand.genre; next.brandName ||= brand.name; next.brandCta ||= brand.cta;
+    await Promise.all(next.scenes.map(s => loadImage(s.image))); return next;
+  }
+  function activateReelAccount(next) {
+    stop(); clearTimeout(timer); revision++; reelDirty = false; model = next; selected = 0; time = 0;
+    const used = new Set(model.scenes.filter(s => s.image).map(s => s.image)); for (const key of cache.keys()) if (!used.has(key)) cache.delete(key);
+    q('rDraftName').value = ''; q('rTemplateName').value = ''; q('rTemplateList').replaceChildren(); q('rDraftList').replaceChildren();
+    sync(); listReelDrafts(); if (!q('r-style').hidden) templateList(); q('rSaveStatus').textContent = 'アカウントのリールを表示中';
+  }
+  async function openReelRecord(record) {
+    pendingReelLoads++;
+    try { const next = normalize(record.value); next.genre ||= AccountWorkspace.brand.genre; next.brandName ||= AccountWorkspace.brand.name; next.brandCta ||= AccountWorkspace.brand.cta; await Promise.all(next.scenes.map(s => loadImage(s.image))); activateReelAccount(next); await persist(); }
+    finally { pendingReelLoads--; }
+  }
+  async function listReelDrafts() {
+    const ownerId = AccountWorkspace.currentId, list = q('rDraftList');
+    try {
+      const records = (await store('getAll')).filter(r => r.id.startsWith('draft-')).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+      if (ownerId !== AccountWorkspace.currentId) return; list.replaceChildren();
+      for (const record of records) {
+        const row = document.createElement('article'); row.className = 'w-reel-draft'; const name = document.createElement('b'); name.textContent = record.name;
+        const open = document.createElement('button'); open.textContent = '開いて再編集'; open.onclick = async () => { if (!await confirmAction('現在のリールをこの下書きに切り替えます。残したい内容は先に名前を付けて保存してください。')) return; if (ownerId !== AccountWorkspace.currentId) return; await persist(); if (!lastReelSaveOK) return toast('現在のリールを保存できないため切替を中止しました。'); await openReelRecord(record); };
+        const remove = document.createElement('button'); remove.textContent = '削除'; remove.onclick = async () => { if (!await confirmAction('この保存済みリールを削除しますか？')) return; if (ownerId !== AccountWorkspace.currentId) return; try { await store('delete', record.id, ownerId); listReelDrafts(); } catch { toast('削除できませんでした。'); } };
+        row.append(name, open, remove); list.append(row);
+      }
+    } catch { list.textContent = '保存したリールを読み込めません。'; }
+  }
+  function persist() {
+    clearTimeout(timer); const copy = structuredClone(model), savedRevision = revision, ownerId = AccountWorkspace.currentId, snapshotAt = Date.now();
+    writeQueue = writeQueue.catch(() => {}).then(async () => { try { await store('put', {id: 'current', value: copy, updated: snapshotAt}, ownerId); lastReelSaveOK = true; AccountWorkspace.clearRecovery('reel', snapshotAt, ownerId); if (savedRevision === revision && ownerId === AccountWorkspace.currentId) { reelDirty = false; q('rSaveStatus').textContent = '● リールをこのブラウザに保存済み'; } } catch { lastReelSaveOK = false; q('rSaveStatus').textContent = '保存できません。空き容量・設定を確認してください'; } }); return writeQueue;
+  }
+  function change() { revision++; reelDirty = true; q('rSaveStatus').textContent = '保存中…'; clearTimeout(timer); timer = setTimeout(persist, 350); draw(); updateTime(); updateScriptWarnings(); }
   function normalize(value) {
     if (!value || !Array.isArray(value.scenes) || value.scenes.length !== 5) throw Error('保存形式が違います');
     const clean = structuredClone(value); clean.style = {...defaultStyle, ...clean.style};
@@ -129,7 +169,7 @@
     context.fillStyle = st.color; context.font = `${st.font === 'bold' ? 600 : 400} ${size}px ${family}`; context.textAlign = st.align;
     const x = st.align === 'left' ? 110 : st.align === 'right' ? 970 : 540;
     rows.forEach((row, j) => context.fillText(row, x, y + 65 + size + j * size * 1.5));
-    context.textAlign = 'left'; context.font = `24px ${family}`; context.fillText('39歳からの頑張らない美容', 100, y + height - 22);
+    context.textAlign = 'left'; context.font = `24px ${family}`; context.fillText((model.brandName || AccountWorkspace.brand.name).slice(0, 36), 100, y + height - 22);
     return overflow;
   }
   function draw() {
@@ -155,8 +195,9 @@
     const tick = () => { time = Math.min(total(), (performance.now() - startTime) / 1000); const index = which(time).index; if (index !== selected) { selected = index; syncSelected(); } draw(); updateTime(); if (time >= total()) { stop(); return; } frameID = requestAnimationFrame(tick); }; tick();
   }
   async function templateList() {
-    const list = q('rTemplateList'); list.replaceChildren();
+    const list = q('rTemplateList'), ownerId = AccountWorkspace.currentId; list.replaceChildren();
     try { for (const record of (await store('getAll')).filter(x => x.id.startsWith('template-'))) {
+      if (ownerId !== AccountWorkspace.currentId) return;
       const row = document.createElement('div'); row.className = 'reel-template'; const name = document.createElement('b'); name.textContent = record.name;
       const use = document.createElement('button'); use.textContent = '適用'; use.onclick = () => { stop(); model.style = {...defaultStyle, ...record.style}; sync(); change(); toast('テンプレートを適用しました'); };
       const remove = document.createElement('button'); remove.textContent = '削除'; remove.onclick = async () => { if (await confirmAction('このリール用テンプレートを削除しますか？')) { await store('delete', record.id); templateList(); } };
@@ -247,7 +288,8 @@
     q('rImage').onchange = async e => {
       const file = e.target.files[0], target = model.scenes[selected]; if (!file) return;
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 ** 2) { toast('12MB以下のJPG・PNG・WebPを選んでください'); e.target.value = ''; return; }
-      try { const img = await loadImage(await readFile(file)); if (img.width * img.height > 40000000) throw Error(); const scale = Math.min(1, 1920 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); const data = c.toDataURL('image/jpeg', .9); await loadImage(data); target.image = data; target.imageName = file.name; stop(); syncSelected(); change(); } catch { toast('写真を読み込めませんでした。別の写真を選んでください'); } finally { e.target.value = ''; }
+      pendingReelLoads++;
+      try { const img = await loadImage(await readFile(file)); if (img.width * img.height > 40000000) throw Error(); const scale = Math.min(1, 1920 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); const data = c.toDataURL('image/jpeg', .9); await loadImage(data); target.image = data; target.imageName = file.name; stop(); syncSelected(); change(); } catch { toast('写真を読み込めませんでした。別の写真を選んでください'); } finally { pendingReelLoads--; e.target.value = ''; }
     };
     q('rRemoveImage').onclick = () => { stop(); model.scenes[selected].image = null; model.scenes[selected].imageName = ''; syncSelected(); change(); };
     q('rPrompt').oninput = e => { model.scenes[selected].prompt = e.target.value; change(); };
@@ -257,20 +299,37 @@
     q('rSaveTemplate').onclick = async () => { const name = q('rTemplateName').value.trim(); if (!name) return toast('テンプレート名を入力してください'); try { await store('put', {id: 'template-' + crypto.randomUUID(), name, style: structuredClone(model.style)}); templateList(); toast('リール用テンプレートを保存しました'); } catch { toast('テンプレートを保存できませんでした'); } };
     for (const [id, key] of [['rNarration', 'narration'], ['rBgm', 'bgm']]) q(id).onchange = async e => {
       const file = e.target.files[0]; if (!file) return; if (!file.type.startsWith('audio/') || file.size > 20 * 1024 ** 2) { toast('20MB以下の音声ファイルを選んでください'); e.target.value = ''; return; }
-      try { const data = await readFile(file), check = new Audio(); check.src = data; await new Promise((resolve, reject) => { check.onloadedmetadata = resolve; check.onerror = reject; }); if (!Number.isFinite(check.duration)) throw Error(); stop(); model[key] = {name: file.name, mime: file.type, data}; if (key === 'bgm') model.bgmConsent = false; sync(); change(); } catch { toast('この音声を読み込めません。MP3・WAVなど別の形式をお試しください'); } finally { e.target.value = ''; }
+      pendingReelLoads++;
+      try { const data = await readFile(file), check = new Audio(); check.src = data; await new Promise((resolve, reject) => { check.onloadedmetadata = resolve; check.onerror = reject; }); if (!Number.isFinite(check.duration)) throw Error(); stop(); model[key] = {name: file.name, mime: file.type, data}; if (key === 'bgm') model.bgmConsent = false; sync(); change(); } catch { toast('この音声を読み込めません。MP3・WAVなど別の形式をお試しください'); } finally { pendingReelLoads--; e.target.value = ''; }
     };
     q('rRemoveNarration').onclick = () => { stop(); model.narration = null; sync(); change(); }; q('rRemoveBgm').onclick = () => { stop(); model.bgm = null; model.bgmConsent = false; sync(); change(); };
     q('rBgmConsent').onchange = e => { stop(); model.bgmConsent = e.target.checked; change(); }; q('rLicense').oninput = e => { model.license = e.target.value; change(); };
     q('rVolume').oninput = e => { model.volume = Number(e.target.value) / 100; music.volume = model.volume; q('rVolumeValue').textContent = e.target.value + ' %'; change(); };
     q('rPlay').onclick = play; q('rStop').onclick = () => { stop(); time = 0; selected = 0; syncSelected(); draw(); updateTime(); };
     q('rSeek').oninput = e => { stop(); time = Number(e.target.value); selected = which(time).index; syncSelected(); draw(); updateTime(); };
+    q('rSaveNamed').onclick = async () => {
+      const ownerId = AccountWorkspace.currentId, button = q('rSaveNamed'); button.disabled = true;
+      try { await store('put', {id: 'draft-' + crypto.randomUUID(), name: q('rDraftName').value.trim() || model.theme || '無題のリール', value: structuredClone(model), updated: Date.now()}, ownerId); if (ownerId === AccountWorkspace.currentId) await listReelDrafts(); toast('このアカウントにリールを保存しました。'); }
+      catch { toast('リールを保存できません。空き容量と設定を確認してください。'); } finally { button.disabled = false; }
+    };
+    q('rNewProject').onclick = async () => { if (!await confirmAction('ブランド設定から新しいリールを作成します。残したい内容は先に名前を付けて保存してください。')) return; await persist(); if (!lastReelSaveOK) return toast('保存できないため新規作成を中止しました。'); activateReelAccount(brandReelDefault()); await persist(); };
     q('rSaveProject').onclick = () => persist(); q('rZip').onclick = exportZip; q('rMp4').onclick = exportMp4;
     document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); persist(); } });
+    const emergencyReel = () => AccountWorkspace.recover('reel', {id: 'current', value: structuredClone(model), updated: Date.now()});
+    window.addEventListener('beforeunload', event => { if ((reelDirty || !lastReelSaveOK) && !emergencyReel()) { event.preventDefault(); event.returnValue = ''; } });
+    window.addEventListener('pagehide', () => { if (reelDirty || !lastReelSaveOK) emergencyReel(); persist(); });
   }
   async function boot() {
-    q('reelMode').disabled = true;
-    try { await openDB(); const saved = await store('get', 'current'); if (saved) model = normalize(saved.value); await Promise.all(model.scenes.map(s => loadImage(s.image))); } catch { q('rSaveStatus').textContent = '保存データを読み込めません。ブラウザの保存設定をご確認ください'; }
-    bind(); sync(); q('reelMode').disabled = false; await persist(); document.fonts.ready.then(draw); checkServer();
+    q('reelMode').disabled = true; await openDB();
+    model = await prepareReelAccount(AccountWorkspace.currentId, AccountWorkspace.brand);
+    bind(); sync(); q('reelMode').disabled = false; await persist(); await listReelDrafts();
+    AccountWorkspace.register('reel', {
+      flush: async () => { await persist(); return lastReelSaveOK; }, busy: () => busy || pendingReelLoads > 0,
+      prepare: prepareReelAccount, activate: activateReelAccount,
+      snapshot: () => ({id: 'current', value: structuredClone(model), updated: Date.now()}),
+      open: openReelRecord, validate: record => record.id.startsWith('template-') ? record.style : normalize(record.value)
+    });
+    document.fonts.ready.then(draw); checkServer();
   }
-  boot().catch(() => { q('rSaveStatus').textContent = 'リールを起動できませんでした。再読み込みしてください'; });
+  boot().catch(error => { q('rSaveStatus').textContent = '保存データを読み込めないため停止しました。原データは削除していません。'; AccountWorkspace.fail(error); });
 })();
