@@ -87,6 +87,7 @@
     all('.r-current').forEach(el => el.textContent = `${selected + 1}：${roles[selected]}`);
     all('.reel-scene').forEach((el, i) => el.classList.toggle('selected', i === selected));
     all('#rTimeline button').forEach((el, i) => el.classList.toggle('active', i === selected));
+    q('rImageStyle').value=model.scenes[selected].imageStyle||'real'; q('rComposition').textContent='';q('rCropControls').hidden=!model.scenes[selected].image;const f=TsumuguImageTools.framing(model.scenes[selected].framing);for(const k of ['zoom','x','y'])q('rCrop'+k[0].toUpperCase()+k.slice(1)).value=f[k];
     q('rPrompt').value = model.scenes[selected].prompt; q('rImageName').textContent = model.scenes[selected].imageName || '写真なし（背景デザインで表示）'; q('rRemoveImage').disabled = !model.scenes[selected].image;
   }
   function cards() {
@@ -148,8 +149,9 @@
     const {style, scenes} = model; context.fillStyle = style.bg; context.fillRect(0, 0, 1080, 1920);
     const img = cache.get(scenes[index].image);
     if (img) {
-      const scale = Math.max(1080 / img.width, 1920 / img.height) * (zoom && style.animation === 'zoom' ? 1 + .07 * progress : 1);
-      context.drawImage(img, (1080 - img.width * scale) / 2, (1920 - img.height * scale) / 2, img.width * scale, img.height * scale);
+      const f=TsumuguImageTools.framing(scenes[index].framing);f.zoom*=zoom && style.animation==='zoom'?1+.07*progress:1;
+      const c=TsumuguImageTools.crop(img.width,img.height,f,9/16);
+      context.drawImage(img,c.sx,c.sy,c.sw,c.sh,0,0,1080,1920);
     } else {
       context.fillStyle = '#a6ad8d'; context.globalAlpha = .16; context.beginPath(); context.arc(1000, 700, 480, 0, 7); context.fill(); context.beginPath(); context.arc(100, 1550, 330, 0, 7); context.fill(); context.globalAlpha = 1;
       context.strokeStyle = style.color; context.globalAlpha = .2; context.strokeRect(55, 55, 970, 1810); context.globalAlpha = 1;
@@ -204,11 +206,11 @@
       row.append(name, use, remove); list.append(row);
     } } catch { list.textContent = 'テンプレート保存先を利用できません。'; }
   }
-  async function sceneAsset(index, layer) {
+  async function sceneAsset(index, layer, format = 'png') {
     const c = document.createElement('canvas'); c.width = 1080; c.height = 1920; const context = c.getContext('2d');
     if (layer !== 'caption') background(context, index, 0, false);
     if (layer !== 'background') caption(context, index);
-    return c.toDataURL(layer === 'background' ? 'image/jpeg' : 'image/png', .9);
+    return c.toDataURL(layer === 'background' || format === 'jpg' ? 'image/jpeg' : 'image/png', .9);
   }
   function bytes(data) { const raw = atob(data.split(',')[1]); return Uint8Array.from(raw, c => c.charCodeAt(0)); }
   const utf8 = text => new TextEncoder().encode(text);
@@ -220,7 +222,7 @@
     if (!model.scenes.every(s => Number.isFinite(s.seconds) && s.seconds >= .5) || total() > 243) { toast('シーンの秒数を確認してください。'); return false; }
     return true;
   }
-  function setBusy(value, text = '') { busy = value; q('rZip').disabled = value; q('rMp4').disabled = value || !server; q('rExportStatus').textContent = text; q('rProgress').hidden = !value; q('reelWorkspace').querySelector('.reel-editor').inert = value; }
+  function setBusy(value, text = '') { busy = value; q('rZip').disabled = value; q('rPng').disabled=value; q('rJpeg').disabled=value; q('rMp4').disabled = value || !server; q('rExportStatus').textContent = text; q('rProgress').hidden = !value; q('reelWorkspace').querySelector('.reel-editor').inert = value; }
   async function exportZip() {
     if (busy || !await validateExport()) return; stop(); setBusy(true, 'CapCut用の素材を準備中…');
     try {
@@ -284,16 +286,26 @@
     for (const [id, key] of Object.entries({rTheme: 'theme', rTarget: 'target', rPurpose: 'purpose', rHookType: 'hookType', rPostType: 'postType', rFacts: 'scriptFacts', rExperienceBefore: 'experienceBefore', rExperienceAction: 'experienceAction', rExperienceResult: 'experienceResult', rProductName: 'productName', rProductFacts: 'productFacts', rAdDisclosure: 'adDisclosure'})) q(id).oninput = e => { model[key] = e.target.value; if (key === 'adDisclosure') stop(); refreshScriptControls(); change(); };
     q('rDuration').onchange = () => { stop(); model.duration = Number(q('rDuration').value); model.scenes.forEach((s, i) => s.seconds = durationSets[model.duration][i]); time = 0; cards(); change(); };
     q('rRebalance').onclick = () => { stop(); model.scenes.forEach((s, i) => s.seconds = durationSets[model.duration][i]); time = 0; cards(); change(); };
-    q('rGenerate').onclick = async () => { if (!model.theme.trim()) return toast('テーマを入力してください'); if (!await confirmAction('5シーンのテロップと台本を編集用テンプレートで置き換えます。写真・音声・デザインは残します。設定済みの音声がある場合は、台本との一致も確認してください。')) return; stop(); const previous = model.scenes; model.scenes = drafts(model).map((s, i) => ({...s, image: previous[i].image, imageName: previous[i].imageName})); model.scriptTemplateVersion = 1; time = 0; selected = 0; cards(); refreshScriptControls(); change(); };
+    q('rGenerate').onclick = async () => { if (!model.theme.trim()) return toast('テーマを入力してください'); if (!await confirmAction('5シーンのテロップと台本を編集用テンプレートで置き換えます。写真・音声・デザインは残します。設定済みの音声がある場合は、台本との一致も確認してください。')) return; stop(); const previous = model.scenes; model.scenes = drafts(model).map((s, i) => ({...s, image: previous[i].image, imageName: previous[i].imageName, framing: previous[i].framing, imageStyle:previous[i].imageStyle})); model.scriptTemplateVersion = 1; time = 0; selected = 0; cards(); refreshScriptControls(); change(); };
     q('rImage').onchange = async e => {
       const file = e.target.files[0], target = model.scenes[selected]; if (!file) return;
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 ** 2) { toast('12MB以下のJPG・PNG・WebPを選んでください'); e.target.value = ''; return; }
       pendingReelLoads++;
-      try { const img = await loadImage(await readFile(file)); if (img.width * img.height > 40000000) throw Error(); const scale = Math.min(1, 1920 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); const data = c.toDataURL('image/jpeg', .9); await loadImage(data); target.image = data; target.imageName = file.name; stop(); syncSelected(); change(); } catch { toast('写真を読み込めませんでした。別の写真を選んでください'); } finally { pendingReelLoads--; e.target.value = ''; }
+      try { await TsumuguImageTools.validateFile(file); const img = await loadImage(await readFile(file)); if (img.width * img.height > 40000000) throw Error(); const scale = Math.min(1, 1920 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); const data = c.toDataURL('image/jpeg', .9); await loadImage(data); target.image = data; target.imageName = file.name; stop(); syncSelected(); change(); } catch { toast('写真を読み込めませんでした。別の写真を選んでください'); } finally { pendingReelLoads--; e.target.value = ''; }
     };
     q('rRemoveImage').onclick = () => { stop(); model.scenes[selected].image = null; model.scenes[selected].imageName = ''; syncSelected(); change(); };
     q('rPrompt').oninput = e => { model.scenes[selected].prompt = e.target.value; change(); };
-    q('rPromptReset').onclick = () => { model.scenes[selected].prompt = imagePrompt(selected); syncSelected(); change(); };
+    q('rImageStyle').onchange=e=>{model.scenes[selected].imageStyle=e.target.value;change();};
+    q('rPromptReset').onclick=()=>{const s=model.scenes[selected],p=TsumuguImageTools.plan({theme:model.theme,text:s.caption+' '+s.narration,style:s.imageStyle,genre:model.genre,ratio:'9:16'});s.prompt=p.prompt;syncSelected();q('rComposition').textContent=p.composition;change();};
+    for(const k of ['Zoom','X','Y'])q('rCrop'+k).oninput=e=>{const s=model.scenes[selected];s.framing=TsumuguImageTools.framing({...s.framing,[k.toLowerCase()]:Number(e.target.value)});stop();change();};
+    q('rCropReset').onclick=()=>{model.scenes[selected].framing=TsumuguImageTools.framing();syncSelected();stop();change();};
+    async function exportStill(format) {
+      if(busy || pendingReelLoads)return;
+      stop();setBusy(true,'シーン画像を準備中…');
+      try {await fontsReady;const index=selected,data=await sceneAsset(index,'composite',format);download(new Blob([bytes(data)],{type:format==='jpg'?'image/jpeg':'image/png'}),'reel-scene-'+(index+1)+'.'+format);setBusy(false,'シーン画像を保存しました。');}
+      catch {setBusy(false,'シーン画像を保存できませんでした。');}
+    }
+    q('rPng').onclick=()=>exportStill('png');q('rJpeg').onclick=()=>exportStill('jpg');
     q('rPromptCopy').onclick = async () => { try { await navigator.clipboard.writeText(q('rPrompt').value); toast('プロンプトをコピーしました'); } catch { q('rPrompt').select(); toast('プロンプトを選択しました。コピーしてください'); } };
     for (const [key, id] of Object.entries({font: 'rFont', bg: 'rBg', color: 'rColor', band: 'rBand', size: 'rSize', y: 'rY', align: 'rAlign', animation: 'rAnimation'})) q(id).oninput = e => { stop(); model.style[key] = ['size', 'y'].includes(key) ? Number(e.target.value) : e.target.value; q('rSizeValue').textContent = model.style.size + ' px'; q('rYValue').textContent = model.style.y + ' %'; change(); };
     q('rSaveTemplate').onclick = async () => { const name = q('rTemplateName').value.trim(); if (!name) return toast('テンプレート名を入力してください'); try { await store('put', {id: 'template-' + crypto.randomUUID(), name, style: structuredClone(model.style)}); templateList(); toast('リール用テンプレートを保存しました'); } catch { toast('テンプレートを保存できませんでした'); } };
