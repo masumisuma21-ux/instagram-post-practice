@@ -37,13 +37,13 @@ function normalize(raw) {
     bg: color(raw.bg, initial.bg), fg: color(raw.fg, initial.fg), accent: color(raw.accent, initial.accent),
     font: ['sans', 'serif', 'bold'].includes(raw.font) ? raw.font : 'sans',
     slides: raw.slides.map(s => ({
-      title: safeText(s.title, 70), body: safeText(s.body, 400),
+      title: safeText(s.title, 70), body: safeText(s.body, 400), imageStyle: Object.hasOwn(TsumuguImageTools.styles,s.imageStyle)?s.imageStyle:'real', imagePrompt: safeText(s.imagePrompt,1800),
       titleSize: clamp(s.titleSize, 38, 96, 72), size: clamp(s.size ?? raw.size, 28, 56, 40),
       titleAlign: ['left', 'center', 'right'].includes(s.titleAlign) ? s.titleAlign : 'left',
       bodyAlign: ['left', 'center', 'right'].includes(s.bodyAlign) ? s.bodyAlign : 'left',
       textPosition: ['top', 'center', 'bottom'].includes(s.textPosition) ? s.textPosition : 'top',
       photo: s.photo && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(s.photo.data) ? {
-        data: s.photo.data, name: safeText(s.photo.name, 120), width: clamp(s.photo.width, 10, 820, 350),
+        framing: TsumuguImageTools.framing(s.photo.framing), data: s.photo.data, name: safeText(s.photo.name, 120), width: clamp(s.photo.width, 10, 820, 350),
         x: clamp(s.photo.x, 0, 100, 80), y: clamp(s.photo.y, 0, 100, 65), layout: s.photo.layout === 'bottom' ? 'bottom' : 'side'
       } : null
     }))
@@ -132,6 +132,8 @@ function syncGlobalControls() {
 }
 function syncPageControls() {
   const s = state.slides[current];
+  $('#fImageStyle').value=s.imageStyle||'real'; $('#fImagePrompt').value=s.imagePrompt||''; $('#fComposition').textContent='';
+  if(s.photo){const f=TsumuguImageTools.framing(s.photo.framing); $('#fCropAspect').value=f.aspect; for(const k of ['zoom','x','y']) $('#fCrop'+k[0].toUpperCase()+k.slice(1)).value=f[k];}
   $$('.active-page').forEach(el => el.textContent = `${current + 1}枚目・${names[current]}`);
   ['titleSize', 'size', 'titleAlign', 'bodyAlign', 'textPosition'].forEach(k => $('#' + k).value = s[k]);
   $('#titleSizeValue').textContent = s.titleSize + ' px'; $('#sizeValue').textContent = s.size + ' px';
@@ -203,10 +205,11 @@ function scene(model, index) {
   if (withPhoto) {
     const image = images.get(s.photo.data);
     if (image) {
-      const w = Math.min(s.photo.width, image.width / image.height * 940), h = w * image.height / image.width;
+      const crop = TsumuguImageTools.crop(image.width,image.height,s.photo.framing);
+      const w = Math.min(s.photo.width, crop.sw / crop.sh * 940), h = w * crop.sh / crop.sw;
       const x = 80 + (920 - w) * s.photo.x / 100, y = 220 + (940 - h) * s.photo.y / 100;
       rect(x - 12, y - 12, w + 24, h + 24, model.bg, {stroke: model.accent, strokeWidth: 1});
-      items.push({type: 'image', x, y, w, h, data: s.photo.data});
+      items.push({type: 'image', x, y, w, h, crop, iw:image.width, ih:image.height, data: s.photo.data});
     }
   }
   const shift = s.textPosition === 'center' ? 75 : s.textPosition === 'bottom' ? 145 : 0;
@@ -241,7 +244,7 @@ function draw(canvas, model, index) {
     } else if (item.type === 'text') {
       ctx.fillStyle = item.color; ctx.textAlign = item.align; ctx.font = `${item.weight} ${item.size}px ${item.family}`; ctx.fillText(item.value, item.x, item.y);
     } else if (item.type === 'image') {
-      const img = images.get(item.data); if (img) ctx.drawImage(img, item.x, item.y, item.w, item.h);
+      const img = images.get(item.data); if (img) ctx.drawImage(img, item.crop.sx,item.crop.sy,item.crop.sw,item.crop.sh,item.x, item.y, item.w, item.h);
     }
     ctx.restore();
   }
@@ -274,6 +277,7 @@ async function uploadPhoto(file, target) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) { toast('12MB以下のJPG・PNG・WebPを選んでください。'); return; }
   let objectURL; pendingFeedLoads++;
   try {
+    await TsumuguImageTools.validateFile(file);
     objectURL = URL.createObjectURL(file); const img = new Image(); img.src = objectURL; await img.decode();
     if (img.naturalWidth * img.naturalHeight > 40000000) throw Error('写真が大きすぎます。縮小してから選んでください。');
     const factor = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
@@ -376,7 +380,7 @@ function svg(model, i) {
     if (item.type === 'circle') return `<circle cx="${item.cx}" cy="${item.cy}" r="${item.r}" fill="${item.fill}"${opacity}/>`;
     if (item.type === 'line') return `<line x1="${item.x1}" y1="${item.y1}" x2="${item.x2}" y2="${item.y2}" stroke="${item.stroke}" stroke-width="${item.strokeWidth}"/>`;
     if (item.type === 'path') return `<path d="${item.d}" fill="none" stroke="${item.stroke}" stroke-width="${item.strokeWidth}"${opacity}/>`;
-    if (item.type === 'image') return `<image x="${item.x}" y="${item.y}" width="${item.w}" height="${item.h}" href="${xml(item.data)}"/>`;
+    if (item.type === 'image') return `<svg x="${item.x}" y="${item.y}" width="${item.w}" height="${item.h}" viewBox="${item.crop.sx} ${item.crop.sy} ${item.crop.sw} ${item.crop.sh}" overflow="hidden"><image width="${item.iw}" height="${item.ih}" href="${xml(item.data)}"/></svg>`;
     const family = item.family === 'JPSerif' ? 'Noto Serif CJK JP,Noto Serif JP,serif' : 'Noto Sans CJK JP,Noto Sans JP,sans-serif';
     return `<text x="${item.x}" y="${item.y}" fill="${item.color}" font-family="${family}" font-size="${item.size}" font-weight="${item.weight}" text-anchor="${{left: 'start', center: 'middle', right: 'end'}[item.align]}" xml:space="preserve">${xml(item.value)}</text>`;
   });
@@ -386,9 +390,9 @@ function download(blob, name) {
   const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name;
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
-async function png(model, i) {
+async function png(model, i, format = 'png') {
   const canvas = document.createElement('canvas'); canvas.width = 1080; canvas.height = 1350; draw(canvas, model, i);
-  return new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(Error('画像を作成できませんでした。')), 'image/png'));
+  return new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(Error('画像を作成できませんでした。')), format === 'jpg' ? 'image/jpeg' : 'image/png', .92));
 }
 
 function crc32(bytes){let c=0xffffffff;for(const b of bytes){c^=b;for(let j=0;j<8;j++)c=(c>>>1)^((c&1)?0xedb88320:0)}return(c^0xffffffff)>>>0}
@@ -398,7 +402,7 @@ let exporting = false;
 async function exportImages(format, all) {
   if (exporting) return;
   exporting = true;
-  const controls = ['#individual', '#download', '#svgDownload', '#svgAll']; controls.forEach(s => $(s).disabled = true);
+  const controls = ['#individual', '#feedJpeg', '#feedJpegAll', '#download', '#svgDownload', '#svgAll']; controls.forEach(s => $(s).disabled = true);
   try {
     await fontsReady;
     const model = clone(state), selected = current; await prepareImages(model);
@@ -407,7 +411,7 @@ async function exportImages(format, all) {
     if (overflow.length && !await confirmAction(`${overflow.map(i => i + 1).join('・')}枚目に収まらない文章があります。「…」で省略したまま保存しますか？文章を短くすると全文を表示できます。`, '文章の長さを確認')) return;
     const files = [];
     for (const i of indexes) {
-      const blob = format === 'png' ? await png(model, i) : new Blob([svg(model, i)], {type: 'image/svg+xml;charset=utf-8'});
+      const blob = format !== 'svg' ? await png(model, i, format) : new Blob([svg(model, i)], {type: 'image/svg+xml;charset=utf-8'});
       files.push({name: `carousel-${String(i + 1).padStart(2, '0')}.${format}`, data: new Uint8Array(await blob.arrayBuffer()), blob});
     }
     download(all ? zip(files) : files[0].blob, all ? `carousel-7pages-${format}.zip` : files[0].name);
@@ -446,6 +450,12 @@ function bind() {
   });
   $('#prev').onclick = () => setPage(current - 1); $('#next').onclick = () => setPage(current + 1);
   $('#help').onclick = () => $('#guide').showModal(); $('#closeGuide').onclick = () => $('#guide').close();
+  $('#fImageStyle').onchange=e=>{state.slides[current].imageStyle=e.target.value;update();};
+  $('#fImagePrompt').oninput=e=>{state.slides[current].imagePrompt=e.target.value;update();};
+  $('#fPromptMake').onclick=()=>{const s=state.slides[current],p=TsumuguImageTools.plan({theme:state.theme,text:s.title+' '+s.body,style:s.imageStyle,genre:AccountWorkspace.brand.genre,ratio:'4:5'});s.imagePrompt=p.prompt;$('#fImagePrompt').value=p.prompt;$('#fComposition').textContent=p.composition;update();};
+  $('#fPromptCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('#fImagePrompt').value);toast('プロンプトをコピーしました');}catch{$('#fImagePrompt').select();toast('選択した文章をコピーしてください');}};
+  for(const k of ['Aspect','Zoom','X','Y']) $('#fCrop'+k).oninput=e=>{const p=state.slides[current].photo;if(!p)return;p.framing=TsumuguImageTools.framing({...p.framing,[k.toLowerCase()]:k==='Aspect'?e.target.value:Number(e.target.value)});update();};
+  $('#fCropReset').onclick=()=>{const p=state.slides[current].photo;if(p){p.framing=TsumuguImageTools.framing();syncPageControls();update();}};
   $('#photoFile').onchange = e => uploadPhoto(e.target.files[0], current);
   ['Width', 'X', 'Y'].forEach(key => $('#photo' + key).oninput = e => {
     const p = state.slides[current].photo; if (!p) return;
@@ -473,6 +483,7 @@ function bind() {
     if (!await confirmAction('サンプルから新しい投稿をはじめます。今の投稿を残したい場合は、先に名前を付けて保存してください。', '新しい投稿')) return;
     if (!await flush()) { toast('保存に失敗したため新規作成を中止しました。'); return; } await replaceState(brandFeedDefault()); $('#draftName').value = ''; setTab('content'); toast('新しい投稿をはじめました。');
   };
+  $('#feedJpeg').onclick = () => exportImages('jpg', false); $('#feedJpegAll').onclick = () => exportImages('jpg', true);
   $('#individual').onclick = () => exportImages('png', false); $('#download').onclick = () => exportImages('png', true);
   $('#svgDownload').onclick = () => exportImages('svg', false); $('#svgAll').onclick = () => exportImages('svg', true);
   document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
