@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
 const path=require('node:path');
 const root=path.resolve(__dirname,'..');
 const base='https://masumisuma21-ux.github.io/instagram-post-practice/';
-const assets=new Set(['index.html','image-tools.js','accounts.js','app.js','reels.js','reel-script-templates.js','style.css','accounts.css','reels.css','sans.woff','serif.woff']);
+const assets=new Set(['index.html','feed-photo-editor.js','feed-photo-editor.css','image-tools.js','accounts.js','app.js','reels.js','reel-script-templates.js','style.css','accounts.css','reels.css','sans.woff','serif.woff']);
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',args:['--no-sandbox']});
  try {for(const width of [1440,390]){

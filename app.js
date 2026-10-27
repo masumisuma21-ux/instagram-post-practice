@@ -23,11 +23,13 @@ const initial = {
   ].map(s => ({...s, ...textDefaults, photo: null}))
 };
 let state = clone(initial), current = 0, db = null, saveTimer, revision = 0, pendingFeedLoads = 0, feedDirty = false;
+let photoEditor;
 let saveQueue = Promise.resolve(), lastSaveOK = true, fontsReady;
 const images = new Map();
 const measure = document.createElement('canvas').getContext('2d');
 const clamp = (n, min, max, fallback) => Number.isFinite(Number(n)) ? Math.max(min, Math.min(max, Number(n))) : fallback;
 const safeText = (s, max) => typeof s === 'string' ? [...s].slice(0, max).join('') : '';
+function savedPlacement(value) { if(!TsumuguPhotoLayout.valid(value))throw Error('写真配置を読み込めません。設定を確認してください。');return clone(value); }
 function normalize(raw) {
   if (!raw || !Array.isArray(raw.slides) || raw.slides.length !== 7 || !raw.slides.every(s => s && typeof s.title === 'string' && typeof s.body === 'string')) throw Error('保存データの形式を確認できませんでした。');
   const color = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d;
@@ -43,7 +45,7 @@ function normalize(raw) {
       bodyAlign: ['left', 'center', 'right'].includes(s.bodyAlign) ? s.bodyAlign : 'left',
       textPosition: ['top', 'center', 'bottom'].includes(s.textPosition) ? s.textPosition : 'top',
       photo: s.photo && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(s.photo.data) ? {
-        framing: TsumuguImageTools.framing(s.photo.framing), data: s.photo.data, name: safeText(s.photo.name, 120), width: clamp(s.photo.width, 10, 820, 350),
+        ...(s.photo.placement?{placement:savedPlacement(s.photo.placement)}:{}), ...(s.photo.placementReset?{placementReset:savedPlacement(s.photo.placementReset)}:{}), framing: TsumuguImageTools.framing(s.photo.framing), data: s.photo.data, name: safeText(s.photo.name, 120), width: clamp(s.photo.width, 10, 820, 350),
         x: clamp(s.photo.x, 0, 100, 80), y: clamp(s.photo.y, 0, 100, 65), layout: s.photo.layout === 'bottom' ? 'bottom' : 'side'
       } : null
     }))
@@ -105,8 +107,8 @@ function persist() {
   });
   return saveQueue;
 }
-function update() {
-  revision++; feedDirty = true; storageStatus('保存中…'); clearTimeout(saveTimer); saveTimer = setTimeout(persist, 500); render();
+function update(live = false) {
+  revision++; feedDirty = true; storageStatus('保存中…'); clearTimeout(saveTimer); saveTimer = setTimeout(persist, 500); render(live);
 }
 async function flush() { await persist(); return lastSaveOK; }
 function setTab(tab) {
@@ -114,7 +116,7 @@ function setTab(tab) {
   ['content', 'design', 'photo', 'drafts'].forEach(id => $('#' + id).hidden = id !== tab);
   if (tab === 'drafts') listDrafts();
 }
-function setPage(i) { current = (i + 7) % 7; syncPageControls(); render(); }
+function setPage(i) { if(photoEditor?.busy())return; current = (i + 7) % 7; syncPageControls(); render(); }
 function fields() {
   $('#fields').replaceChildren();
   state.slides.forEach((s, i) => {
@@ -144,7 +146,7 @@ function syncPageControls() {
     const img = images.get(s.photo.data);
     const maxWidth = img ? Math.min(820, Math.max(10, Math.floor(940 * img.width / img.height / 10) * 10)) : 820;
     $('#photoWidth').max = maxWidth; $('#photoWidth').min = Math.min(180, maxWidth);
-    s.photo.width = Math.min(s.photo.width, maxWidth);
+    if(!s.photo.placement)s.photo.width = Math.min(s.photo.width, maxWidth);
     ['width', 'x', 'y'].forEach(k => {
       const id = 'photo' + k[0].toUpperCase() + k.slice(1); $('#' + id).value = s.photo[k];
       $('#' + id + 'Value').textContent = s.photo[k] + (k === 'width' ? ' px' : ' %');
@@ -166,6 +168,12 @@ function wrap(text, width, size, family, weight) {
   return result;
 }
 // A shared scene defines PNG, preview and SVG, including the same wrapping and image bounds.
+function photoLayer(model, index) {
+  const p=model.slides[index].photo,image=p&&images.get(p.data);if(!image)return null;
+  const r=p.placement,crop=TsumuguImageTools.crop(image.width,image.height,p.framing,r?r.width/r.height:undefined);
+  const w=r?r.width:Math.min(p.width,crop.sw/crop.sh*940),h=r?r.height:w*crop.sh/crop.sw;
+  return {type:'image',id:r?.id||'primary-photo',x:r?r.x:80+(920-w)*p.x/100,y:r?r.y:220+(940-h)*p.y/100,w,h,crop,iw:image.width,ih:image.height,data:p.data};
+}
 function scene(model, index) {
   const s = model.slides[index], family = fontFor(model), items = [], warnings = [];
   const rect = (x, y, w, h, fill, extra = {}) => items.push({type: 'rect', x, y, w, h, fill, ...extra});
@@ -186,6 +194,8 @@ function scene(model, index) {
     rows.forEach((row, i) => text(row, anchor, y + size + i * size * 1.55, size, model.fg, align, weight));
   }
   rect(0, 0, 1080, 1350, model.bg);
+  const freePhoto=s.photo?.placement,photoItem=photoLayer(model,index);
+  if(freePhoto?.layer==='background'&&photoItem)items.push(photoItem);
   if (model.template === 'elegant') {
     rect(42, 42, 996, 1266, 'none', {stroke: model.accent, strokeWidth: 2});
     rect(55, 55, 970, 1240, 'none', {stroke: model.accent, strokeWidth: 1});
@@ -199,10 +209,11 @@ function scene(model, index) {
     circle(1005, 530, 210, model.accent, .12); circle(1005, 530, 160, model.bg, .65);
     items.push({type: 'path', d: 'M 875 1140 Q 945 1080 943 990 M 929 1092 Q 864 1092 878 1058 Q 918 1051 929 1092 M 941 1053 Q 1002 1042 986 1010 Q 949 1019 941 1053', stroke: model.accent, strokeWidth: 3, opacity: .5});
   }
+  if(freePhoto?.layer==='photo'&&photoItem)items.push(photoItem);
   text(model.concept, 100, 125, 24, model.fg);
   text(`${String(index + 1).padStart(2, '0')} / 07`, 980, 125, 23, model.fg, 'right');
-  const withPhoto = !!s.photo, bottomPhoto = withPhoto && s.photo.layout === 'bottom';
-  if (withPhoto) {
+  const withPhoto = !!s.photo, flow=freePhoto?.textFlow, bottomPhoto=freePhoto?flow==='bottom':withPhoto&&s.photo.layout==='bottom';
+  if (withPhoto && !freePhoto) {
     const image = images.get(s.photo.data);
     if (image) {
       const crop = TsumuguImageTools.crop(image.width,image.height,s.photo.framing);
@@ -218,7 +229,7 @@ function scene(model, index) {
   text(index === 0 ? 'LESS EFFORT, MORE YOU.' : index === 6 ? 'MY BEAUTY, MY PACE.' : `BEAUTY NOTE  ${String(index).padStart(2, '0')}`, 100, 225, 23, model.fg);
   block(s.title, 100, titleY, 875, titleHeight, s.titleSize, s.titleAlign, true);
   const bodyY = bottomPhoto ? 500 + shift / 3 : 620 + shift;
-  const bodyWidth = withPhoto && !bottomPhoto ? 470 : 875;
+  const bodyWidth = (freePhoto?flow==='side':withPhoto&&!bottomPhoto) ? 470 : 875;
   const bodyHeight = bottomPhoto ? 180 : Math.min(440, 1140 - bodyY);
   line(100, bodyY - 30, 165, bodyY - 30, model.accent, 4);
   block(s.body, 100, bodyY, bodyWidth, bodyHeight, s.size, s.bodyAlign);
@@ -250,12 +261,13 @@ function draw(canvas, model, index) {
   }
   return built;
 }
-function render() {
+function render(live = false) {
   const built = draw($('#mainCanvas'), state, current);
-  $$ ('#thumbs button').forEach((button, i) => {
+  if(!live) $$ ('#thumbs button').forEach((button, i) => {
     draw(button.querySelector('canvas'), state, i); button.classList.toggle('active', i === current); button.setAttribute('aria-pressed', i === current);
   });
   $('#pageLabel').textContent = `${String(current + 1).padStart(2, '0')} / 07　${names[current]}`;
+  photoEditor?.sync();
   $('#layoutWarning').hidden = !built.warnings.length;
   $('#layoutWarning').textContent = `${built.warnings.join('・')}が収まらないため、一部を「…」で表示しています。文章を短くするか、写真を外してください。`;
 }
@@ -286,7 +298,8 @@ async function uploadPhoto(file, target) {
     const data = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', .88);
     const photoImage = await imageFrom(data);
     if (state.slides[target] !== targetSlide) { toast('投稿が切り替わったため、写真の追加を中止しました。'); return; }
-    state.slides[target].photo = {data, name: file.name, width: Math.min(350, Math.floor(photoImage.width / photoImage.height * 440)), x: 96, y: 66, layout: 'side'};
+    const placement=TsumuguPhotoLayout.fit(photoImage.width,photoImage.height);
+    state.slides[target].photo = {placement,placementReset:clone(placement),framing:TsumuguImageTools.framing(),data, name: file.name, width: Math.min(350, Math.floor(photoImage.width / photoImage.height * 440)), x: 96, y: 66, layout: 'side'};
     syncPageControls(); update(); toast(`${target + 1}枚目に写真を追加しました。`);
   } catch (error) { toast(error.message.startsWith('写真が') ? error.message : '写真を読み込めませんでした。別の写真を選んでください。'); }
   finally { pendingFeedLoads--; if (objectURL) URL.revokeObjectURL(objectURL); $('#photoFile').value = ''; }
@@ -384,7 +397,7 @@ function svg(model, i) {
     const family = item.family === 'JPSerif' ? 'Noto Serif CJK JP,Noto Serif JP,serif' : 'Noto Sans CJK JP,Noto Sans JP,sans-serif';
     return `<text x="${item.x}" y="${item.y}" fill="${item.color}" font-family="${family}" font-size="${item.size}" font-weight="${item.weight}" text-anchor="${{left: 'start', center: 'middle', right: 'end'}[item.align]}" xml:space="preserve">${xml(item.value)}</text>`;
   });
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1350" viewBox="0 0 1080 1350"><title>${xml(model.slides[i].title)}</title><desc>つむぐの編集用SVG。文字はテキストとして出力。表示にはNoto日本語フォントを推奨。取り込み先によりフォント置換や画像化が発生します。</desc>${elements.join('\n')}</svg>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1350" viewBox="0 0 1080 1350" overflow="hidden"><title>${xml(model.slides[i].title)}</title><desc>つむぐの編集用SVG。文字はテキストとして出力。表示にはNoto日本語フォントを推奨。取り込み先によりフォント置換や画像化が発生します。</desc>${elements.join('\n')}</svg>`;
 }
 function download(blob, name) {
   const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name;
@@ -420,6 +433,7 @@ async function exportImages(format, all) {
   finally { exporting = false; controls.forEach(s => $(s).disabled = false); }
 }
 function bind() {
+  photoEditor=TsumuguPhotoLayout.editor({photo:()=>state.slides[current].photo,key:()=>AccountWorkspace.currentId+':'+current,geometry:()=>photoLayer(state,current),crop:()=>{const p=state.slides[current].photo,img=images.get(p.data);return TsumuguImageTools.crop(img.width,img.height,p.framing);},change:update,blocked:()=>exporting||pendingFeedLoads>0});
   fields();
   ['theme', 'concept', 'account'].forEach(k => $('#' + k).oninput = e => {
     state[k] = e.target.value;
@@ -454,8 +468,8 @@ function bind() {
   $('#fImagePrompt').oninput=e=>{state.slides[current].imagePrompt=e.target.value;update();};
   $('#fPromptMake').onclick=()=>{const s=state.slides[current],p=TsumuguImageTools.plan({theme:state.theme,text:s.title+' '+s.body,style:s.imageStyle,genre:AccountWorkspace.brand.genre,ratio:'4:5'});s.imagePrompt=p.prompt;$('#fImagePrompt').value=p.prompt;$('#fComposition').textContent=p.composition;update();};
   $('#fPromptCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('#fImagePrompt').value);toast('プロンプトをコピーしました');}catch{$('#fImagePrompt').select();toast('選択した文章をコピーしてください');}};
-  for(const k of ['Aspect','Zoom','X','Y']) $('#fCrop'+k).oninput=e=>{const p=state.slides[current].photo;if(!p)return;p.framing=TsumuguImageTools.framing({...p.framing,[k.toLowerCase()]:k==='Aspect'?e.target.value:Number(e.target.value)});update();};
-  $('#fCropReset').onclick=()=>{const p=state.slides[current].photo;if(p){p.framing=TsumuguImageTools.framing();syncPageControls();update();}};
+  for(const k of ['Aspect','Zoom','X','Y']) $('#fCrop'+k).oninput=e=>{const p=state.slides[current].photo;if(!p)return;photoEditor?.beforeCrop();p.framing=TsumuguImageTools.framing({...p.framing,[k.toLowerCase()]:k==='Aspect'?e.target.value:Number(e.target.value)});if(k==='Aspect')photoEditor?.aspectChanged();update();};
+  $('#fCropReset').onclick=()=>{const p=state.slides[current].photo;if(p){photoEditor?.beforeCrop();p.framing=TsumuguImageTools.framing();photoEditor?.aspectChanged();syncPageControls();update();}};
   $('#photoFile').onchange = e => uploadPhoto(e.target.files[0], current);
   ['Width', 'X', 'Y'].forEach(key => $('#photo' + key).oninput = e => {
     const p = state.slides[current].photo; if (!p) return;
@@ -499,7 +513,7 @@ async function boot() {
   bind(); syncGlobalControls(); syncPageControls(); render(); $('.editor').inert = false;
   await persist();
   AccountWorkspace.register('feed', {
-    flush, busy: () => exporting || pendingFeedLoads > 0,
+    flush, busy: () => exporting || pendingFeedLoads > 0 || photoEditor?.busy(),
     prepare: prepareFeedAccount, activate: activateFeedAccount,
     snapshot: () => ({id: 'autosave', state: clone(state), updated: Date.now()}),
     open: record => replaceState(record.state), validate: record => normalize(record.state)
