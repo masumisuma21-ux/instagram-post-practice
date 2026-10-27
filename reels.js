@@ -2,45 +2,40 @@
 (() => {
   'use strict';
   const q = id => document.getElementById(id), all = sel => [...document.querySelectorAll(sel)];
-  const roles = ['フック', '共感', '気づき・情報', '解決のヒント', '保存・フォロー'];
+  const Scripts = globalThis.TsumuguReelScripts;
+  const roles = ['フック', '共感', '気づき・情報', '解決のヒント', '締め・呼びかけ'];
   const durationSets = {15: [3, 3, 3, 3, 3], 30: [3, 6, 7, 8, 6], 60: [3, 12, 17, 18, 10]};
   const defaultStyle = {font: 'sans', bg: '#f8f5ec', color: '#435445', band: '#f8f5ec', size: 64, y: 60, align: 'center', animation: 'fade'};
-  let model = {theme: '忙しい朝の保湿ケア', target: '忙しい30代後半〜50代の女性', duration: 30, purpose: 'save', style: {...defaultStyle}, scenes: [], narration: null, bgm: null, bgmConsent: false, license: '', volume: .2};
-  let selected = 0, time = 0, playing = false, frameID, startTime, timer, database, writeQueue = Promise.resolve(), busy = false, server = false;
+  let model = {...Scripts.defaults, scriptTemplateVersion: 1, theme: '忙しい朝の保湿ケア', target: '忙しい30代後半〜50代の女性', duration: 30, purpose: 'save', style: {...defaultStyle}, scenes: [], narration: null, bgm: null, bgmConsent: false, license: '', volume: .2};
+  let selected = 0, time = 0, playing = false, frameID, startTime, timer, database, revision = 0, writeQueue = Promise.resolve(), busy = false, server = false;
   const cache = new Map(), voice = new Audio(), music = new Audio(); music.loop = true;
   const canvas = q('rCanvas'), ctx = canvas.getContext('2d');
   const surface = document.createElement('canvas'); surface.width = 1080; surface.height = 1920; const surfaceContext = surface.getContext('2d');
-  function drafts(theme, purpose, duration) {
-    const base = outline(theme), long = Number(duration) >= 30;
-    const texts = [
-      ['美容、頑張りすぎていませんか？', '美容、頑張りすぎていませんか？'],
-      ['忙しい日は、\n自分のケアが後回し。', long ? '忙しい日は、自分のケアが後回しになりがち。全部を完璧にしなくても大丈夫です。' : '忙しい日は、自分のケアが後回し。'],
-      [base[1].title, long ? base[1].body : base[1].body.split('\n')[0]],
-      [base[2].title, long ? base[2].body : base[2].body.split('\n')[0]],
-      [purpose === 'follow' ? '頑張らない美容を、\nこれからも一緒に。' : purpose === 'inform' ? '自分のペースで、\nひとつから。' : 'あとで見返すために、\n保存しておこう。', purpose === 'follow' ? '無理のない美容を、これからも一緒に。よかったらフォローしてください。' : purpose === 'inform' ? 'まずは、できそうなことをひとつ。肌に合わないときは無理せず、気になる症状は専門家へ相談を。' : 'あとで見返すために保存を。頑張らない美容のヒントは、フォローしてチェックしてください。']
-    ];
-    return texts.map(([caption, narration], i) => ({caption, narration, seconds: durationSets[duration][i], image: null, imageName: '', prompt: imagePrompt(i)}));
+  function drafts(settings) {
+    return Scripts.generate(settings).scenes.map((s, i) => ({...s, image: null, imageName: '', prompt: imagePrompt(i)}));
   }
   function imagePrompt(index) {
     const settings = ['アイボリーの洗面台に置いた美容液と柔らかな朝の光', '忙しい朝、30〜40代女性の自然な後ろ姿。顔は写さない', '30〜40代女性がスキンケア商品を手に取る手元のクローズアップ', '美容液を手のひらに出す自然な所作。顔は画角の外', 'ベージュのリネンとスキンケア商品、穏やかな暮らしの一場面'];
     return `リアルで上品な美容写真。${settings[index]}。温かいベージュ・アイボリー、自然光、余白を広く。9:16の縦長。商品ロゴ・文字・透かしなし。過度な肌補正やビフォーアフター表現なし。実在人物の再現なし。`;
   }
-  model.scenes = drafts(model.theme, model.purpose, model.duration);
+  model.scenes = drafts(model);
   const total = () => model.scenes.reduce((sum, s) => sum + Number(s.seconds), 0);
   function which(t) { let start = 0; for (let i = 0; i < model.scenes.length; i++) { if (t < start + model.scenes[i].seconds || i === 4) return {index: i, start, local: Math.max(0, t - start)}; start += model.scenes[i].seconds; } }
   const clock = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   function openDB() { return new Promise((resolve, reject) => { const r = indexedDB.open('tsumugu-reels', 1); r.onupgradeneeded = () => r.result.createObjectStore('data', {keyPath: 'id'}); r.onsuccess = () => { database = r.result; resolve(); }; r.onerror = () => reject(r.error); r.onblocked = () => reject(Error('保存先を開けません')); }); }
   function store(op, value) { return new Promise((resolve, reject) => { if (!database) return reject(Error('保存先が使えません')); const tx = database.transaction('data', ['get', 'getAll'].includes(op) ? 'readonly' : 'readwrite'), request = tx.objectStore('data')[op](value); tx.oncomplete = () => resolve(request.result); tx.onerror = tx.onabort = () => reject(tx.error); }); }
   function persist() {
-    clearTimeout(timer); const copy = structuredClone(model);
-    writeQueue = writeQueue.catch(() => {}).then(async () => { try { await store('put', {id: 'current', value: copy}); q('rSaveStatus').textContent = '● リールをこのブラウザに保存済み'; } catch { q('rSaveStatus').textContent = '保存できません。空き容量・設定を確認してください'; } }); return writeQueue;
+    clearTimeout(timer); const copy = structuredClone(model), savedRevision = revision;
+    writeQueue = writeQueue.catch(() => {}).then(async () => { try { await store('put', {id: 'current', value: copy}); if (savedRevision === revision) q('rSaveStatus').textContent = '● リールをこのブラウザに保存済み'; } catch { q('rSaveStatus').textContent = '保存できません。空き容量・設定を確認してください'; } }); return writeQueue;
   }
-  function change() { q('rSaveStatus').textContent = '保存中…'; clearTimeout(timer); timer = setTimeout(persist, 350); draw(); updateTime(); }
+  function change() { revision++; q('rSaveStatus').textContent = '保存中…'; clearTimeout(timer); timer = setTimeout(persist, 350); draw(); updateTime(); updateScriptWarnings(); }
   function normalize(value) {
     if (!value || !Array.isArray(value.scenes) || value.scenes.length !== 5) throw Error('保存形式が違います');
     const clean = structuredClone(value); clean.style = {...defaultStyle, ...clean.style};
     for (const s of clean.scenes) { if (typeof s.caption !== 'string' || typeof s.narration !== 'string') throw Error('台本を確認できません'); s.seconds = Math.max(.5, Math.min(60, Number(s.seconds) || 3)); }
     clean.scenes[0].seconds = Math.min(3, clean.scenes[0].seconds);
+    Object.assign(clean, Scripts.options(clean));
+    clean.scriptTemplateVersion = value.scriptTemplateVersion || 0;
     return clean;
   }
   async function loadImage(data) { if (!data) return null; if (!cache.has(data)) { const img = new Image(); img.src = data; await img.decode(); cache.set(data, img); } return cache.get(data); }
@@ -58,15 +53,15 @@
     q('rScenes').replaceChildren(); q('rTimeline').replaceChildren();
     model.scenes.forEach((s, i) => {
       const box = document.createElement('article'); box.className = 'reel-scene';
-      box.innerHTML = `<h4>${String(i + 1).padStart(2, '0')}　${roles[i]}<span>${i === 0 ? '0〜3秒の冒頭' : '自由に編集'}</span></h4><button class="scene-select">このシーンを表示</button><label>テロップ<textarea maxlength="240" aria-label="シーン${i + 1}のテロップ"></textarea></label><label>ナレーション台本<textarea maxlength="600" aria-label="シーン${i + 1}のナレーション台本"></textarea></label><label>表示秒数<div class="duration-row"><input type="number" min="0.5" max="${i === 0 ? 3 : 60}" step="0.5" aria-label="シーン${i + 1}の表示秒数"><span>秒${i === 0 ? '（最大3秒）' : ''}</span></div></label>`;
+      box.innerHTML = `<h4>${String(i + 1).padStart(2, '0')}　${roles[i]}<span>${i === 0 ? '0〜3秒の冒頭' : '自由に編集'}</span></h4><button class="scene-select">このシーンを表示</button><label>テロップ<textarea maxlength="240" aria-label="シーン${i + 1}のテロップ"></textarea></label><label>ナレーション台本<textarea maxlength="600" aria-label="シーン${i + 1}のナレーション台本"></textarea></label><p class="voice-budget"></p><label>表示秒数<div class="duration-row"><input type="number" min="0.5" max="${i === 0 ? 3 : 60}" step="0.5" aria-label="シーン${i + 1}の表示秒数"><span>秒${i === 0 ? '（最大3秒）' : ''}</span></div></label>`;
       const areas = box.querySelectorAll('textarea'); areas[0].value = s.caption; areas[1].value = s.narration;
-      areas[0].oninput = e => { stop(); s.caption = e.target.value; selected = i; syncSelected(); change(); };
-      areas[1].oninput = e => { s.narration = e.target.value; change(); };
+      areas[0].oninput = e => { stop(); s.caption = e.target.value; selected = i; syncSelected(); if (i === 0) refreshScriptControls(); change(); };
+      areas[1].oninput = e => { s.narration = e.target.value; if (i === 0) refreshScriptControls(); change(); };
       const input = box.querySelector('input'); input.value = s.seconds;
       input.onchange = () => { stop(); s.seconds = Math.round(Math.max(.5, Math.min(i === 0 ? 3 : 60, Number(input.value) || .5)) * 2) / 2; input.value = s.seconds; time = Math.min(time, total()); change(); };
       box.querySelector('button').onclick = () => select(i); q('rScenes').append(box);
       const b = document.createElement('button'); b.innerHTML = `<b>${i + 1}</b>${roles[i]}`; b.onclick = () => select(i); q('rTimeline').append(b);
-    }); syncSelected();
+    }); syncSelected(); updateScriptWarnings();
   }
   function sync() {
     q('rTheme').value = model.theme; q('rTarget').value = model.target; q('rDuration').value = model.duration; q('rPurpose').value = model.purpose;
@@ -76,11 +71,38 @@
     q('rLicense').value = model.license; q('rBgmConsent').checked = model.bgmConsent; q('rVolume').value = model.volume * 100; q('rVolumeValue').textContent = Math.round(model.volume * 100) + ' %';
     if (model.narration) voice.src = model.narration.data; else { voice.removeAttribute('src'); voice.load(); }
     if (model.bgm) music.src = model.bgm.data; else { music.removeAttribute('src'); music.load(); } music.volume = model.volume;
-    cards(); updateTime(); draw();
+    cards(); refreshScriptControls(); updateTime(); draw();
   }
   function updateTime() {
     const seconds = total(); q('rTotal').textContent = `${seconds}秒 ・ 5シーン${Math.abs(seconds - model.duration) > .1 ? `（設定は${model.duration}秒）` : ''}`;
     q('rTime').textContent = `${clock(time)} / ${clock(seconds)}`; q('rSeek').max = seconds; q('rSeek').value = time;
+  }
+  function refreshScriptControls() {
+    const fields = {rHookType: 'hookType', rPostType: 'postType', rFacts: 'scriptFacts', rExperienceBefore: 'experienceBefore', rExperienceAction: 'experienceAction', rExperienceResult: 'experienceResult', rProductName: 'productName', rProductFacts: 'productFacts', rAdDisclosure: 'adDisclosure'};
+    for (const [id, key] of Object.entries(fields)) if (document.activeElement !== q(id)) q(id).value = model[key];
+    const result = Scripts.generate(model);
+    q('rManualFacts').hidden = result.topic !== 'manual' || !['knowledge', 'solution'].includes(model.postType);
+    q('rExperienceFields').hidden = model.postType !== 'experience'; q('rProductFields').hidden = model.postType !== 'product';
+    q('rScriptNotice').textContent = (model.scriptTemplateVersion === 0 ? '保存済みの台本・素材はそのまま引き継ぎました。 ' : '') + result.notice;
+    const list = q('rHookCandidates'); list.replaceChildren();
+    for (const hook of result.hooks) {
+      const row = document.createElement('article'); row.className = 'hook-card';
+      const applied = model.scenes[0].caption === hook.caption && model.scenes[0].narration === hook.narration; row.classList.toggle('selected', applied);
+      const label = document.createElement('h4'); label.textContent = hook.label;
+      const copy = document.createElement('p'); copy.textContent = hook.caption;
+      const button = document.createElement('button'); button.dataset.hook = hook.id; button.setAttribute('aria-pressed', applied); button.textContent = applied ? '第1シーンに反映中' : 'このフックを第1シーンに反映';
+      button.onclick = () => { stop(); Object.assign(model.scenes[0], {caption: hook.caption, narration: hook.narration}); model.hookType = hook.id; selected = 0; time = 0; cards(); refreshScriptControls(); change(); toast('フックを第1シーンに反映しました。ほかのシーンと素材は残しています。'); };
+      row.append(label, copy, button); list.append(row);
+    }
+  }
+  function updateScriptWarnings() {
+    const warnings = Scripts.warnings(model.scenes), box = q('rScriptWarnings'); box.hidden = !warnings.length; box.replaceChildren();
+    if (warnings.length) { const list = document.createElement('ul'); warnings.forEach(message => { const item = document.createElement('li'); item.textContent = message; list.append(item); }); box.append(list); }
+    all('.reel-scene .voice-budget').forEach((el, i) => {
+      const count = [...model.scenes[i].narration.replace(/\s/g, '')].length, seconds = model.scenes[i].seconds;
+      el.textContent = `ナレーション ${count}字 / 読み上げ約${Math.ceil(count / 6)}秒の目安（1秒6字）・表示${seconds}秒`;
+      el.classList.toggle('long', count > seconds * 6);
+    });
   }
   function background(context, index, progress = 0, zoom = true) {
     const {style, scenes} = model; context.fillStyle = style.bg; context.fillRect(0, 0, 1080, 1920);
@@ -95,6 +117,10 @@
   }
   function caption(context, index) {
     const st = model.style, text = model.scenes[index].caption, family = st.font === 'serif' ? 'JPSerif' : 'JP';
+    if (model.adDisclosure !== 'none') {
+      context.globalAlpha = .95; context.fillStyle = st.band; context.fillRect(70, 140, 260, 80); context.globalAlpha = 1;
+      context.fillStyle = st.color; context.font = `38px ${family}`; context.textAlign = 'left'; context.fillText(model.adDisclosure, 94, 195);
+    }
     let size = st.size, rows;
     do { rows = wrap(text, 860, size, family, st.font === 'bold' ? 600 : 400); if (rows.length * size * 1.5 <= 500) break; size--; } while (size > 32);
     const overflow = rows.length * size * 1.5 > 500;
@@ -157,16 +183,25 @@
   async function exportZip() {
     if (busy || !await validateExport()) return; stop(); setBusy(true, 'CapCut用の素材を準備中…');
     try {
-      const files = [], timeline = ['scene,start_seconds,end_seconds,duration_seconds,image,caption_layer,animation'], script = [`テーマ：${model.theme}`, `ターゲット：${model.target}`, `目的：${q('rPurpose').selectedOptions[0].textContent}`, ''], subtitles = [];
+      const files = [], timeline = ['scene,start_seconds,end_seconds,duration_seconds,image,caption_layer,animation'], script = [`テーマ：${model.theme}`, `ターゲット：${model.target}`, `目的：${q('rPurpose').selectedOptions[0].textContent}`, `投稿タイプ：${q('rPostType').selectedOptions[0].textContent}`, `冒頭タイプ：${q('rHookType').selectedOptions[0].textContent}`, `広告・PR表示：${model.adDisclosure === 'none' ? 'なし' : model.adDisclosure}`, '方式：外部AIを使わない編集用テンプレート', ''], subtitles = [];
       let start = 0;
       for (let i = 0; i < 5; i++) {
         const n = String(i + 1).padStart(2, '0'), s = model.scenes[i], end = start + s.seconds;
         for (const layer of ['background', 'caption', 'composite']) files.push({name: `scene-${n}-${layer}.${layer === 'background' ? 'jpg' : 'png'}`, data: bytes(await sceneAsset(i, layer))});
         timeline.push(`${i + 1},${start.toFixed(3)},${end.toFixed(3)},${s.seconds},scene-${n}-background.jpg,scene-${n}-caption.png,${model.style.animation}`);
         script.push(`【${i + 1} ${roles[i]} / ${start.toFixed(1)}〜${end.toFixed(1)}秒】`, `テロップ：${s.caption}`, `ナレーション：${s.narration}`, '');
-        subtitles.push(`${i + 1}\n${stamp(start)} --> ${stamp(end)}\n${s.caption.replace(/-->/g, '→')}\n`); start = end;
+        subtitles.push(`${i + 1}\n${stamp(start)} --> ${stamp(end)}\n${(model.adDisclosure !== 'none' ? model.adDisclosure + '\n' : '') + s.caption.replace(/-->/g, '→')}\n`); start = end;
       }
       files.push({name: 'script.txt', data: utf8(script.join('\n'))}, {name: 'timeline.csv', data: utf8('\uFEFF' + timeline.join('\r\n'))}, {name: 'captions.srt', data: utf8(subtitles.join('\n'))}, {name: 'image-prompts.txt', data: utf8(model.scenes.map((s, i) => `Scene ${i + 1}\n${s.prompt}`).join('\n\n'))});
+      files.push({name: 'script-notes.txt', data: utf8([
+        '入力した情報のメモ（ツールが事実確認したものではありません）',
+        '確認済み情報・出典メモ：' + model.scriptFacts,
+        '体験・困っていたこと：' + model.experienceBefore,
+        '体験・試したこと：' + model.experienceAction,
+        '体験・感じたことと条件：' + model.experienceResult,
+        '商品名：' + model.productName, '商品情報・出典メモ：' + model.productFacts,
+        ...Scripts.warnings(model.scenes)
+      ].join('\n\n'))});
       const settings = structuredClone(model); settings.scenes.forEach(s => delete s.image); delete settings.narration; delete settings.bgm;
       files.push({name: 'settings.json', data: utf8(JSON.stringify(settings, null, 2))});
       if (model.narration) files.push({name: safeAudioName(model.narration, 'narration'), data: bytes(model.narration.data)});
@@ -205,10 +240,10 @@
       b.onclick = () => { tab(b.dataset.rTab); if (b.dataset.rTab === 'style') templateList(); };
       b.onkeydown = e => { if (['ArrowLeft', 'ArrowRight'].includes(e.key)) { e.preventDefault(); const next = buttons[(index + (e.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length]; next.click(); next.focus(); } };
     });
-    for (const [id, key] of Object.entries({rTheme: 'theme', rTarget: 'target', rPurpose: 'purpose'})) q(id).oninput = e => { model[key] = e.target.value; change(); };
+    for (const [id, key] of Object.entries({rTheme: 'theme', rTarget: 'target', rPurpose: 'purpose', rHookType: 'hookType', rPostType: 'postType', rFacts: 'scriptFacts', rExperienceBefore: 'experienceBefore', rExperienceAction: 'experienceAction', rExperienceResult: 'experienceResult', rProductName: 'productName', rProductFacts: 'productFacts', rAdDisclosure: 'adDisclosure'})) q(id).oninput = e => { model[key] = e.target.value; if (key === 'adDisclosure') stop(); refreshScriptControls(); change(); };
     q('rDuration').onchange = () => { stop(); model.duration = Number(q('rDuration').value); model.scenes.forEach((s, i) => s.seconds = durationSets[model.duration][i]); time = 0; cards(); change(); };
     q('rRebalance').onclick = () => { stop(); model.scenes.forEach((s, i) => s.seconds = durationSets[model.duration][i]); time = 0; cards(); change(); };
-    q('rGenerate').onclick = async () => { if (!model.theme.trim()) return toast('テーマを入力してください'); if (!await confirmAction('5シーンのテロップと台本を定型案で置き換えます。画像は残します。')) return; stop(); const previous = model.scenes; model.scenes = drafts(model.theme, model.purpose, model.duration).map((s, i) => ({...s, image: previous[i].image, imageName: previous[i].imageName})); time = 0; selected = 0; cards(); change(); };
+    q('rGenerate').onclick = async () => { if (!model.theme.trim()) return toast('テーマを入力してください'); if (!await confirmAction('5シーンのテロップと台本を編集用テンプレートで置き換えます。写真・音声・デザインは残します。設定済みの音声がある場合は、台本との一致も確認してください。')) return; stop(); const previous = model.scenes; model.scenes = drafts(model).map((s, i) => ({...s, image: previous[i].image, imageName: previous[i].imageName})); model.scriptTemplateVersion = 1; time = 0; selected = 0; cards(); refreshScriptControls(); change(); };
     q('rImage').onchange = async e => {
       const file = e.target.files[0], target = model.scenes[selected]; if (!file) return;
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 ** 2) { toast('12MB以下のJPG・PNG・WebPを選んでください'); e.target.value = ''; return; }

@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
-PUBLIC_FILES = {'index.html', 'app.js', 'style.css', 'reels.js', 'reels.css', 'sans.woff', 'serif.woff', 'FONT-LICENSE.txt', '.nojekyll'}
+PUBLIC_FILES = {'index.html', 'app.js', 'style.css', 'reels.js', 'reels.css', 'reel-script-templates.js', 'sans.woff', 'serif.woff', 'FONT-LICENSE.txt', '.nojekyll'}
 MIMES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff': 'font/woff', '.txt': 'text/plain; charset=utf-8'}
 RENDER_LOCK = threading.Lock()
 
