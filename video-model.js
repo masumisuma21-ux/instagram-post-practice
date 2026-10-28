@@ -1,6 +1,7 @@
 /* Offline variable-cut projects. No network, decoding, DOM or persistence side effects. */
 (function(root){
 'use strict';
+const Captions=typeof module==='object'&&module.exports?require('./video-captions'):root.TsumuguVideoCaptions;
 const FILE_LIMIT=25*1024**2,ACCOUNT_LIMIT=50*1024**2,MAX_ASSETS=30,MAX_CUTS=60;
 const number=(v,a,b)=>Number.isFinite(v)&&v>=a&&v<=b;
 const identifier=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(v);
@@ -9,9 +10,9 @@ function empty(){return {version:1,name:'商品紹介リール',width:1080,heigh
 function validateProject(p){
  check(p&&p.version===1&&p.width===1080&&p.height===1920&&typeof p.name==='string'&&p.name.length<=60,'動画プロジェクトの形式を確認してください。');
  check(Array.isArray(p.cuts)&&p.cuts.length<=MAX_CUTS,'カットは60個までです。');const ids=new Set();
- for(const c of p.cuts){check(c&&typeof c==='object'&&identifier(c.id)&&identifier(c.assetId)&&!ids.has(c.id),'カットID・素材IDを確認してください。');ids.add(c.id);check(number(c.start,0,300)&&number(c.end,.1,300)&&c.end-c.start>=.099999,'開始・終了は0.1秒以上の範囲で指定してください。');check(c.crop&&['cover','contain'].includes(c.crop.fit)&&number(c.crop.x,0,100)&&number(c.crop.y,0,100)&&number(c.crop.zoom,1,3),'動画のトリミング設定が不正です。');check(Array.isArray(c.captions)&&c.captions.length===0,'テロップは次段階の機能です。');}
+ for(const c of p.cuts){check(c&&typeof c==='object'&&identifier(c.id)&&identifier(c.assetId)&&!ids.has(c.id),'カットID・素材IDを確認してください。');ids.add(c.id);check(number(c.start,0,300)&&number(c.end,.1,300)&&c.end-c.start>=.099999,'開始・終了は0.1秒以上の範囲で指定してください。');check(c.crop&&['cover','contain'].includes(c.crop.fit)&&number(c.crop.x,0,100)&&number(c.crop.y,0,100)&&number(c.crop.zoom,1,3),'動画のトリミング設定が不正です。');check(Array.isArray(c.captions)&&c.captions.length===0,'カット別のテロップ形式は非対応です。全体タイムラインのテロップを使ってください。');}
  check(p.cuts.reduce((s,c)=>s+c.end-c.start,0)<=600.001,'編集全体は10分以内にしてください。');
- check(Array.isArray(p.captions)&&p.captions.length===0&&p.audio?.version===1&&p.audio.mode==='source','音声編集・テロップは次段階の機能です。');return p;
+ check(Array.isArray(p.captions),'テロップの形式を確認してください。');if(p.captions.length){check(!!Captions,'テロップ対応ファイルを読み込めません。再読み込みしてください。');Captions.validate(p.captions);}check(p.audio?.version===1&&p.audio.mode==='source','音声編集は次段階の機能です。');return p;
 }
 function validateRecord(r){
  check(r&&identifier(r.id)&&r.version===1,'動画レコードの形式が不正です。');
