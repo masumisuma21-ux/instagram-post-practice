@@ -23,7 +23,7 @@
     const restore=(p,v)=>{for(const k of ['placement','placementReset','framing']){if(v[k]===undefined)delete p[k];else p[k]=copy(v[k]);}};
     function remember(p) { const list=histories.get(p)||[];list.push(snap(p));if(list.length>40)list.shift();histories.set(p,list); }
     function ensure(p) {if(!p.placement){const r=hooks.geometry();p.placement=create({x:r.x,y:r.y,width:r.w,height:r.h},p.layout==='bottom'?'bottom':'side');}if(!p.placementReset)p.placementReset=copy(p.placement); }
-    function commit(fn) {const p=hooks.photo();if(!p||hooks.blocked()||gesture)return;remember(p);ensure(p);fn(p);selected=true;hooks.change(false);sync();}
+    function commit(fn) {const p=hooks.photo();if(!p||hooks.blocked()||gesture)return;remember(p);ensure(p);fn(p);selected=true;hooks.select?.();hooks.change(false);sync();}
     function sync() {
       const p=hooks.photo(),key=hooks.key();if(lastPhoto!==p||lastKey!==key){selected=false;lastPhoto=p;lastKey=key;}
       overlay.hidden=!p;tools.hidden=!p||!selected;q('photoSelectTools').hidden=!p;q('photoLegacyControls').hidden=!!p?.placement;
@@ -38,7 +38,7 @@
     box.onpointerdown=e=>{
       if(e.button!==0||gesture||hooks.blocked())return;e.preventDefault();e.stopPropagation();const p=hooks.photo();if(!p)return;
       const rect=overlay.getBoundingClientRect();gesture={id:e.pointerId,p,key:hooks.key(),before:snap(p),startX:e.clientX,startY:e.clientY,rect,handle:e.target.dataset.handle,moved:false};
-      selected=true;sync();box.focus({preventScroll:true});box.setPointerCapture(e.pointerId);
+      selected=true;hooks.select?.();sync();box.focus({preventScroll:true});box.setPointerCapture(e.pointerId);
     };
     box.onpointermove=e=>{
       if(!gesture||gesture.id!==e.pointerId)return;e.preventDefault();const g=gesture;if(hooks.photo()!==g.p||hooks.key()!==g.key)return cancel();
@@ -54,12 +54,12 @@
     function cancel() {if(!gesture)return;const g=gesture;gesture=null;restore(g.p,g.before);if(box.hasPointerCapture(g.id))box.releasePointerCapture(g.id);hooks.change(false);sync();}
     box.onpointerup=finish;box.onpointercancel=cancel;box.onlostpointercapture=()=>{if(gesture)cancel();};
     q('mainCanvas').addEventListener('pointerdown',()=>{selected=false;sync();});
-    q('photoSelect').onclick=()=>{selected=true;sync();box.focus({preventScroll:true});};
+    q('photoSelect').onclick=()=>{selected=true;hooks.select?.();sync();box.focus({preventScroll:true});};
     q('photoFill').onclick=()=>commit(p=>p.placement=cover(p.placement));
     q('photoCenter').onclick=()=>commit(p=>p.placement={...p.placement,x:(W-p.placement.width)/2,y:(H-p.placement.height)/2});
     q('photoBackground').onclick=()=>commit(p=>p.placement={...cover(p.placement),layer:'background'});
     q('photoResetPlacement').onclick=()=>commit(p=>p.placement=copy(p.placementReset));
-    q('photoUndo').onclick=()=>{const p=hooks.photo(),list=p&&histories.get(p);if(!p||!list?.length||gesture||hooks.blocked())return;restore(p,list.pop());hooks.change(false);selected=true;sync();};
+    q('photoUndo').onclick=()=>{const p=hooks.photo(),list=p&&histories.get(p);if(!p||!list?.length||gesture||hooks.blocked())return;restore(p,list.pop());hooks.change(false);selected=true;hooks.select?.();sync();};
     for(const [id,key]of [['photoPX','x'],['photoPY','y'],['photoPW','width'],['photoPH','height'],['photoPScale','scale']])q(id).onchange=e=>{
       const n=Number(e.target.value);if(!e.target.value||!Number.isFinite(n)){sync();return;}
       commit(p=>{let r=p.placement;if(key==='x'||key==='y')r={...r,[key]:clamp(n,-MAX,MAX)};else{
