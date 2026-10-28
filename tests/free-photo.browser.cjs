@@ -1,7 +1,7 @@
 /* Self-contained Chromium regression. No existing profile or public network needed. */
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path');
 const root=path.resolve(__dirname,'..'),base='https://masumisuma21-ux.github.io/instagram-post-practice/';
-const files=new Set(['index.html','video-model.js','video-editor.js','video-editor.css','feed-heading-editor.js','feed-heading-editor.css','image-tools.js','feed-photo-editor.js','feed-photo-editor.css','app.js','accounts.js','reels.js','reel-script-templates.js','style.css','accounts.css','reels.css','sans.woff','serif.woff']);
+const files=new Set(['index.html','video-timeline.js','video-model.js','video-editor.js','video-editor.css','feed-heading-editor.js','feed-heading-editor.css','image-tools.js','feed-photo-editor.js','feed-photo-editor.css','app.js','accounts.js','reels.js','reel-script-templates.js','style.css','accounts.css','reels.css','sans.woff','serif.woff']);
 (async()=>{const b=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',args:['--no-sandbox']});try{
 for(const mobile of [false,true]){const c=await b.newContext({viewport:{width:mobile?390:1440,height:1000},hasTouch:mobile,isMobile:mobile,acceptDownloads:true});try{
 const requests=[],errors=[];await c.route('**/*',async r=>{const u=r.request().url(),file=u.startsWith(base)?new URL(u).pathname.slice('/instagram-post-practice/'.length)||'index.html':'';if(!files.has(file)||r.request().method()!=='GET'){requests.push(u);return r.abort()}await r.fulfill({path:path.join(root,file)})});const p=await c.newPage();p.on('pageerror',e=>errors.push(e.message));p.setDefaultTimeout(20000);
