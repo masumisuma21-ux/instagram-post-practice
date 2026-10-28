@@ -1,5 +1,7 @@
 # 商品紹介リール 第1段階
 
+以下はPR #6時点の記録。テロップ編集の現行仕様・検証はTEST-VIDEO-CAPTIONS.mdを参照。
+
 2026年10月28日（日本時間）。main 0fe30cefabb38e62bc0de729440be79ba8db14d8からfeature/product-reel-cutsを作成。mainマージ・Pages更新は承認待ち。
 
 ## 実装
