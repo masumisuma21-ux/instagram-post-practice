@@ -244,6 +244,8 @@ function scene(model, index) {
   return {items, warnings, headingBox, headingOverflow};
 }
 function draw(canvas, model, index) {
+  // Detached export canvases do not inherit <html lang>; use the preview's language.
+  canvas.lang = document.documentElement.lang || 'ja';
   const ctx = canvas.getContext('2d'), built = scene(model, index);
   ctx.clearRect(0, 0, 1080, 1350);
   for (const item of built.items) {
