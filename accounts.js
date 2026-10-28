@@ -7,7 +7,10 @@
     {id: 'brand-restaurant', name: '飲食店｜運用代行', icon: '🍽️', genre: '飲食店', target: '家族連れ', worldview: '温かみ、安心感、おいしさ', colors: ['#faf3e7', '#624b3c', '#b88c61'], font: 'sans', template: 'natural', tone: '来店したくなる魅力を、確認済みの情報で伝える', prohibited: '未確認のメニュー・価格・営業時間、根拠のない最上級表現', purpose: '来店・予約・メニュー紹介', cta: 'メニューや予約方法をご確認ください。'}
   ];
   let db, currentId, brands = [], switching = false, loaded = false, lockRelease;
-  const editors = new Map();
+  const editors = new Map(), requiredEditors=['feed','reel'];
+  const editorsReady=()=>requiredEditors.every(ns=>editors.has(ns));
+  const videoSupport=()=>{if(!globalThis.TsumuguVideo)throw Error('動画対応ファイルを読み込めません。ページを再読み込みしてください。');return globalThis.TsumuguVideo;};
+  const includeVideo=()=>q('wIncludeVideo')?.checked!==false;
   const uid = () => 'brand-' + crypto.randomUUID();
   function message(text, error = false) { q('wStatus').textContent = text; q('wStatus').classList.toggle('error', error); }
   function transaction(names, mode, fn) {
@@ -20,13 +23,14 @@
   }
   const range = (id, ns) => ns ? IDBKeyRange.bound([id, ns, ''], [id, ns, '\uffff']) : IDBKeyRange.bound([id, '', ''], [id, '\uffff', '\uffff']);
   async function store(ns, op, value, id = currentId) {
-    if (!loaded || !id || !brands.some(b => b.id === id) || !['feed', 'reel'].includes(ns)) throw Error('制作アカウントを確認できません。');
+    if (!loaded || !id || !brands.some(b => b.id === id) || !['feed', 'reel', 'video'].includes(ns)) throw Error('制作アカウントを確認できません。');
     try {
       const result = await transaction(['records'], ['get', 'all', 'getAll'].includes(op) ? 'readonly' : 'readwrite', tx => {
         const s = tx.objectStore('records');
         if (op === 'all' || op === 'getAll') return s.getAll(range(id, ns));
         if (op === 'get') return s.get([id, ns, value]);
         if (op === 'put') { if (!value || typeof value.id !== 'string') throw Error('投稿IDが不正です。'); return s.put({accountId: id, namespace: ns, id: value.id, record: copy(value)}); }
+        if (op === 'batch') { for(const record of value.put||[])s.put({accountId:id,namespace:ns,id:record.id,record:copy(record)});for(const key of value.delete||[])s.delete([id,ns,key]);return; }
         if (op === 'delete') return s.delete([id, ns, value]);
         throw Error('保存操作が不正です。');
       });
@@ -122,6 +126,7 @@
   }
   function validateData(record, ns) {
     if (!record || typeof record.id !== 'string' || !record.id || record.id.length > 180) throw Error('投稿IDを確認してください。');
+    if(ns==='video'){videoSupport().validateRecord(record);return;}
     const model = ns === 'feed' ? record.state : record.value;
     if (ns === 'reel' && record.id.startsWith('template-')) { if (!record.style || typeof record.name !== 'string') throw Error('テンプレートの形式が違います。'); validateStyle(record.style, 'reel'); return; }
     if (model) validateStyle(ns === 'feed' ? model : (model.style || {}), ns);
@@ -151,13 +156,14 @@
     value.accounts.forEach(group => {
       const b = validateBrand(group.brand); if (typeof b.id !== 'string' || !b.id || ids.has(b.id)) throw Error('アカウントIDが重複・欠落しています。'); ids.add(b.id);
       if (!Array.isArray(group.records)) throw Error('投稿一覧を確認できません。');
-      const keys = new Set(); group.records.forEach(r => { if (!['feed', 'reel'].includes(r.namespace) || r.accountId !== b.id || r.id !== r.record?.id) throw Error('アカウントIDと投稿の所属が一致しません。'); const key = r.namespace + ':' + r.id; if (keys.has(key)) throw Error('投稿IDが重複しています。'); keys.add(key); validateData(r.record, r.namespace); if (editors.has(r.namespace)) editors.get(r.namespace).validate(r.record); });
+      const keys = new Set(); group.records.forEach(r => { if (!['feed', 'reel', 'video'].includes(r.namespace) || r.accountId !== b.id || r.id !== r.record?.id) throw Error('アカウントIDと投稿の所属が一致しません。'); const key = r.namespace + ':' + r.id; if (keys.has(key)) throw Error('投稿IDが重複しています。'); keys.add(key); validateData(r.record, r.namespace); if (editors.has(r.namespace)) editors.get(r.namespace).validate(r.record); });
+      const videoRecords=group.records.filter(r=>r.namespace==='video').map(r=>r.record);if(videoRecords.length)videoSupport().validateBundle(videoRecords);
     });
     return value;
   }
-  function lockUI(value) { for (const id of ['feedWorkspace', 'reelWorkspace', 'wManager']) q(id).inert = value; q('wAccount').disabled = value || editors.size !== 2; q('wManage').disabled = value; }
+  function lockUI(value) { for (const id of ['feedWorkspace', 'reelWorkspace', 'videoWorkspace', 'wManager']) if(q(id))q(id).inert = value; q('wAccount').disabled = value || !editorsReady(); q('wManage').disabled = value; }
   async function flushEditors() { const results = await Promise.all([...editors.values()].map(e => e.flush())); return results.every(v => v !== false); }
-  function requireIdle() { if (switching || [...editors.values()].some(e => e.busy()) || document.querySelector('dialog[open]')) throw Error('画像・音声の読み込み、書き出し、確認画面が終わってから操作してください。'); }
+  function requireIdle() { if (switching || [...editors.values()].some(e => e.busy()) || document.querySelector('dialog[open]')) throw Error('素材の読み込み・再生・保存、書き出し、確認画面が終わってから操作してください。'); }
   async function prepareAccount(id, brand) { const result = []; for (const [ns, e] of editors) result.push([ns, await e.prepare(id, brand)]); return result; }
   function activate(prepared) { prepared.forEach(([ns, data]) => editors.get(ns).activate(data)); renderHeader(); }
   async function switchAccount(id) {
@@ -192,28 +198,31 @@
     const id = currentId, list = q('wPosts'); list.textContent = '読み込み中…';
     const rows = await transaction(['records'], 'readonly', tx => tx.objectStore('records').getAll(range(id)));
     if (id !== currentId) return; list.replaceChildren();
-    const posts = rows.filter(r => !(r.namespace === 'reel' && r.id.startsWith('template-'))).sort((a, b) => (b.record.updated || 0) - (a.record.updated || 0));
+    const posts = rows.filter(r => !(r.namespace==='video'&&r.record.kind==='asset')).filter(r => !(r.namespace === 'reel' && r.id.startsWith('template-'))).sort((a, b) => (b.record.updated || 0) - (a.record.updated || 0));
     if (!posts.length) { list.textContent = 'まだ保存した投稿はありません。編集をはじめるか、名前を付けて保存してください。'; return; }
     for (const r of posts) {
       const row = document.createElement('article'); row.className = 'w-post'; const title = document.createElement('b'), detail = document.createElement('span'), open = document.createElement('button');
-      title.textContent = r.record.name || (r.id === 'autosave' || r.id === 'current' ? '編集中の投稿（自動保存）' : '保存した投稿'); detail.textContent = r.namespace === 'feed' ? 'フィード・7枚' : 'リール・5シーン'; open.textContent = '開いて再編集';
-      open.onclick = async () => { if (currentId !== id) return; try { requireIdle(); if (!await confirmAction('現在の編集内容をこの投稿に切り替えます。残したい投稿は先に名前を付けて保存してください。')) return; switching = true; lockUI(true); if (!await flushEditors()) throw Error('現在の投稿を保存できません。切替を中止しました。'); await editors.get(r.namespace).open(r.record); q(r.namespace === 'feed' ? 'feedMode' : 'reelMode').click(); q('wManager').hidden = true; q('wManage').setAttribute('aria-expanded', false); } catch (e) { message(e.message, true); } finally { switching = false; lockUI(false); } };
+      title.textContent = r.record.name || (r.id === 'autosave' || r.id === 'current' ? '編集中の投稿（自動保存）' : '保存した投稿'); detail.textContent = r.namespace === 'feed' ? 'フィード・7枚' : r.namespace==='video'?'動画・可変カット':'リール・5シーン'; open.textContent = '開いて再編集';
+      open.onclick = async () => { if (currentId !== id) return; try { requireIdle(); if (!await confirmAction('現在の編集内容をこの投稿に切り替えます。残したい投稿は先に名前を付けて保存してください。')) return; switching = true; lockUI(true); if (!await flushEditors()) throw Error('現在の投稿を保存できません。切替を中止しました。'); const editor=editors.get(r.namespace);if(!editor)throw Error('動画機能を読み込めません。ページを再読み込みしてください。');await editor.open(r.record); q(r.namespace === 'feed' ? 'feedMode' : r.namespace==='video'?'videoMode':'reelMode').click(); q('wManager').hidden = true; q('wManage').setAttribute('aria-expanded', false); } catch (e) { message(e.message, true); } finally { switching = false; lockUI(false); } };
       row.append(title, detail, open); list.append(row);
     }
   }
   async function exportBackup() {
     try {
       requireIdle(); switching = true; lockUI(true); const saved = await flushEditors(), id = currentId;
-      const selected = q('wBackupScope').value === 'all' ? brands : brands.filter(b => b.id === id), groups = [];
+      const selected = q('wBackupScope').value === 'all' ? brands : brands.filter(b => b.id === id), groups = [];let estimatedBytes=1000;
       for (const b of selected) {
-        const records = await transaction(['records'], 'readonly', tx => tx.objectStore('records').getAll(range(b.id)));
-        if (b.id === id) for (const [ns, e] of editors) { const record = e.snapshot(); const row = {accountId: id, namespace: ns, id: record.id, record}; const at = records.findIndex(r => r.namespace === ns && r.id === record.id); if (at >= 0) records[at] = row; else records.push(row); }
+        let records = await transaction(['records'], 'readonly', tx => tx.objectStore('records').getAll(range(b.id)));
+        if(!includeVideo())records=records.filter(r=>r.namespace!=='video');
+        if (b.id === id) for (const [ns, e] of editors) { if(ns==='video'&&!includeVideo())continue; const record = e.snapshot(); if(!record)continue; const row = {accountId: id, namespace: ns, id: record.id, record}; const at = records.findIndex(r => r.namespace === ns && r.id === record.id); if (at >= 0) records[at] = row; else records.push(row); }
+        estimatedBytes+=new Blob([JSON.stringify(b)]).size;
+        for(const row of records){const r=row.record,video=row.namespace==='video'&&r.kind==='asset';estimatedBytes+=new Blob([JSON.stringify(video?{...row,record:{...r,blob:undefined,data:''}}:row)]).size+(video?Math.ceil(r.bytes/3)*4+40:0);if(estimatedBytes>100*1024**2)throw Error('バックアップが100MBを超えます。対象アカウントを絞ってください。動画はBase64化で約1.34倍になります。');if(row.namespace==='video')row.record=await videoSupport().encode(r);}
         groups.push({brand: copy(b), records});
       }
-      const value = {format: 'tsumugu-local-backup', version: 1, exportedAt: new Date().toISOString(), includesUnsavedChanges: !saved, accounts: groups};
-      const blob = new Blob([JSON.stringify(value)], {type: 'application/json'}); if (blob.size > 100 * 1024 ** 2) throw Error('バックアップが100MBを超えます。対象アカウントを絞ってください。');
+      const value = {format: 'tsumugu-local-backup', version: 1, exportedAt: new Date().toISOString(), includesUnsavedChanges: !saved, excludesVideo: !includeVideo(), accounts: groups};
+      const blob = new Blob([JSON.stringify(value)], {type: 'application/json'}); if (blob.size > 100 * 1024 ** 2) throw Error('バックアップが100MBを超えます。対象アカウントを絞ってください。動画を含むためファイルは大きくなります。');
       const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = 'tsumugu-accounts-backup.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
-      message(saved ? 'バックアップをダウンロードしました。ファイルは暗号化されていません。' : 'ブラウザ保存は失敗していますが、現在の編集内容もバックアップに含めました。', !saved);
+      message(saved ? 'バックアップをダウンロードしました。ファイルは暗号化されていません。'+(!includeVideo()?' 動画は含みません。動画専用JSONも別に保存してください。':'') : 'ブラウザ保存は失敗していますが、現在の編集内容もバックアップに含めました。'+(!includeVideo()?' 動画は含みません。動画専用JSONも別に保存してください。':''), !saved);
     } catch (e) { message(e.message, true); } finally { switching = false; lockUI(false); }
   }
   async function importBackup(file) {
@@ -222,7 +231,7 @@
       requireIdle(); if (file.size > 100 * 1024 ** 2) throw Error('100MB以下のバックアップを選んでください。');
       switching = true; lockUI(true); const value = validateBackup(JSON.parse(await file.text()));
       // Validate the complete file before any write. Imports always use new IDs; no account is overwritten.
-      const groups = value.accounts.map(g => { const id = uid(); return {brand: {...validateBrand(g.brand), id, name: (g.brand.name.slice(0, 54) + '（取込）')}, records: g.records.map(r => ({...copy(r), accountId: id}))}; });
+      const groups = value.accounts.map(g => { const id = uid(); return {brand: {...validateBrand(g.brand), id, name: (g.brand.name.slice(0, 54) + '（取込）')}, records: g.records.map(r => ({...copy(r), accountId: id,record:r.namespace==='video'?videoSupport().decode(r.record):copy(r.record)}))}; });
       await transaction(['brands', 'records'], 'readwrite', tx => { groups.forEach(g => { tx.objectStore('brands').put(g.brand); g.records.forEach(r => tx.objectStore('records').put(r)); }); });
       brands.push(...groups.map(g => g.brand)); renderHeader(); await renderPosts(); message(`${groups.length}件を新しいアカウントとして取り込みました。既存データは上書きしていません。`);
     } catch (e) { message('インポートできませんでした。' + (e instanceof SyntaxError ? 'JSON形式を確認してください。' : e.message), true); }
@@ -234,7 +243,7 @@
     q('wSaveBrand').onclick = async () => { try { requireIdle(); const brand = readBrand(); await transaction(['brands'], 'readwrite', tx => tx.objectStore('brands').put(brand)); brands = brands.map(b => b.id === brand.id ? brand : b); renderHeader(); message('ブランド設定を保存しました。編集中の投稿は変更していません。新規投稿に適用します。'); } catch (e) { message('ブランドを保存できません。' + e.message, true); } };
     q('wAdd').onclick = async () => { try { requireIdle(); const brand = {...readBrand(), id: uid(), name: '新しいアカウント', icon: '✦', genre: '未設定', target: '', worldview: '', tone: '', prohibited: '', purpose: '', cta: ''}; await transaction(['brands'], 'readwrite', tx => tx.objectStore('brands').put(brand)); brands.push(brand); if (!await switchAccount(brand.id)) { renderHeader(); return; } q('wManager').hidden = false; q('wManage').setAttribute('aria-expanded', true); q('wName').focus(); message('新しいアカウントを追加しました。ブランド設定を編集して保存してください。'); } catch (e) { message(e.message, true); } };
     q('wDelete').onclick = async () => {
-      try { requireIdle(); if (brands.length <= 1) throw Error('最後のアカウントは削除できません。'); const id = currentId, b = brands.find(x => x.id === id); if (!await confirmAction(`「${b.name}」と所属する投稿・写真・音声・テンプレートを削除します。元に戻せません。必要なデータは先にエクスポートしてください。移行元の旧保存データとダウンロード済みバックアップは残ります。`, 'アカウントを削除')) return;
+      try { requireIdle(); if (brands.length <= 1) throw Error('最後のアカウントは削除できません。'); const id = currentId, b = brands.find(x => x.id === id); if (!await confirmAction(`「${b.name}」と所属する投稿・写真・音声・動画素材・テンプレートを削除します。元に戻せません。必要なデータは先にエクスポートしてください。移行元の旧保存データとダウンロード済みバックアップは残ります。`, 'アカウントを削除')) return;
         switching = true; lockUI(true); if (!await flushEditors()) throw Error('保存に失敗しているため削除を中止しました。先にエクスポートしてください。');
         const next = brands.find(x => x.id !== id), prepared = await prepareAccount(next.id, next);
         await transaction(['brands', 'records', 'meta'], 'readwrite', tx => { tx.objectStore('brands').delete(id); const keys = tx.objectStore('records').getAllKeys(range(id)); keys.onsuccess = () => keys.result.forEach(k => tx.objectStore('records').delete(k)); tx.objectStore('meta').put({id: 'active', value: next.id}); });
@@ -254,7 +263,7 @@
     loaded = true; bind(); renderHeader(); message('このブラウザだけに保存します。旧データがある場合は美容アカウントへ引き継いでいます。');
   }
   const ready = init().catch(error => { message(error.message + ' 保存成功とは扱いません。元の保存データは削除していません。', true); q('wFatal').hidden = false; q('wFatal').textContent = error.message; throw error; });
-  // Both editors await the same initialization; UI unlocks only after both register.
-  const api = {ready, store, recovery, recover, clearRecovery, fail(error) { message('保存データの読み込みを中止しました。' + error.message, true); q('wFatal').hidden = false; q('wFatal').textContent = error.message + ' 元のデータは削除していません。設定を確認し、再読み込みしてください。'; lockUI(true); }, get currentId() { return currentId; }, get brand() { return copy(brands.find(b => b.id === currentId)); }, register(ns, editor) { editors.set(ns, editor); if (editors.size === 2) { lockUI(false); renderPosts().catch(e => message(e.message, true)); } }, validateBrand, validateBackup, get busy() { return switching; }, async refreshPosts() { if (!q('wManager').hidden) await renderPosts(); }};
+  // Core editors unlock the workspace; optional video initialization registers a busy guard.
+  const api = {ready, store, recovery, recover, clearRecovery, fail(error) { message('保存データの読み込みを中止しました。' + error.message, true); q('wFatal').hidden = false; q('wFatal').textContent = error.message + ' 元のデータは削除していません。設定を確認し、再読み込みしてください。'; lockUI(true); }, get currentId() { return currentId; }, get brand() { return copy(brands.find(b => b.id === currentId)); }, register(ns, editor) { editors.set(ns, editor); if (editorsReady()) { lockUI(false); renderPosts().catch(e => message(e.message, true)); } }, validateBrand, validateBackup, get busy() { return switching; }, async refreshPosts() { if (!q('wManager').hidden) await renderPosts(); }};
   window.AccountWorkspace = api;
 })();
