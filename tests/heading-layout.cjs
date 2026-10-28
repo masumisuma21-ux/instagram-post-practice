@@ -14,3 +14,8 @@ console.log('PASS: heading schema, proportional corner scale + independent width
 
 assert.equal(T.visibleHits([{x:100,y:200,width:100,height:40}],{...s,stack:'back'},{x:0,y:0,w:1080,h:1350}).length,0);
 assert.equal(T.visibleHits([{x:100,y:200,width:100,height:40}],s,{x:0,y:0,w:1080,h:1350}).length,1);
+
+const body=T.createBody({...s,id:'primary-body',source:'body'});assert(T.validBody(body));assert(!T.valid(body));assert(!T.validBody(s));assert(!T.validBody({...body,size:NaN}));
+for(const corner of ['nw','ne','sw','se','w','e'])assert(T.validBody(T.resize(body,corner,100,50)));
+const bodySvg=T.svg({style:{...body,shadow:true},layout:T.layout(ctx,'本文',body)},t=>t);assert(bodySvg.includes('id="body-clip"')&&bodySvg.includes('id="body-shadow"'));assert(!bodySvg.includes('id="heading-clip"'));
+console.log('PASS: body identity validation, shared scaling, isolated SVG clip/shadow IDs');
