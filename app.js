@@ -23,13 +23,14 @@ const initial = {
   ].map(s => ({...s, ...textDefaults, photo: null}))
 };
 let state = clone(initial), current = 0, db = null, saveTimer, revision = 0, pendingFeedLoads = 0, feedDirty = false;
-let photoEditor;
+let photoEditor, headingEditor;
 let saveQueue = Promise.resolve(), lastSaveOK = true, fontsReady;
 const images = new Map();
 const measure = document.createElement('canvas').getContext('2d');
 const clamp = (n, min, max, fallback) => Number.isFinite(Number(n)) ? Math.max(min, Math.min(max, Number(n))) : fallback;
 const safeText = (s, max) => typeof s === 'string' ? [...s].slice(0, max).join('') : '';
 function savedPlacement(value) { if(!TsumuguPhotoLayout.valid(value))throw Error('写真配置を読み込めません。設定を確認してください。');return clone(value); }
+function savedHeading(value){if(!TsumuguHeading.valid(value))throw Error('見出し設定を読み込めません。');return clone(value);}
 function normalize(raw) {
   if (!raw || !Array.isArray(raw.slides) || raw.slides.length !== 7 || !raw.slides.every(s => s && typeof s.title === 'string' && typeof s.body === 'string')) throw Error('保存データの形式を確認できませんでした。');
   const color = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d;
@@ -39,7 +40,7 @@ function normalize(raw) {
     bg: color(raw.bg, initial.bg), fg: color(raw.fg, initial.fg), accent: color(raw.accent, initial.accent),
     font: ['sans', 'serif', 'bold'].includes(raw.font) ? raw.font : 'sans',
     slides: raw.slides.map(s => ({
-      title: safeText(s.title, 70), body: safeText(s.body, 400), imageStyle: Object.hasOwn(TsumuguImageTools.styles,s.imageStyle)?s.imageStyle:'real', imagePrompt: safeText(s.imagePrompt,1800),
+      ...(s.headingLayer?{headingLayer:savedHeading(s.headingLayer)}:{}), title: safeText(s.title, 70), body: safeText(s.body, 400), imageStyle: Object.hasOwn(TsumuguImageTools.styles,s.imageStyle)?s.imageStyle:'real', imagePrompt: safeText(s.imagePrompt,1800),
       titleSize: clamp(s.titleSize, 38, 96, 72), size: clamp(s.size ?? raw.size, 28, 56, 40),
       titleAlign: ['left', 'center', 'right'].includes(s.titleAlign) ? s.titleAlign : 'left',
       bodyAlign: ['left', 'center', 'right'].includes(s.bodyAlign) ? s.bodyAlign : 'left',
@@ -116,14 +117,14 @@ function setTab(tab) {
   ['content', 'design', 'photo', 'drafts'].forEach(id => $('#' + id).hidden = id !== tab);
   if (tab === 'drafts') listDrafts();
 }
-function setPage(i) { if(photoEditor?.busy())return; current = (i + 7) % 7; syncPageControls(); render(); }
+function setPage(i) { if(photoEditor?.busy()||headingEditor?.busy())return; current = (i + 7) % 7; syncPageControls(); render(); }
 function fields() {
   $('#fields').replaceChildren();
   state.slides.forEach((s, i) => {
     const el = document.createElement('div'); el.className = 'field-card';
     el.innerHTML = `<h3 class="field-title"><span>${String(i + 1).padStart(2, '0')}</span>${names[i]}</h3><label>見出し<textarea class="title-input" id="title${i}" maxlength="70" aria-label="${i + 1}枚目の見出し"></textarea></label><label>本文<textarea id="body${i}" maxlength="400" aria-label="${i + 1}枚目の本文"></textarea></label>`;
     el.querySelector('.title-input').value = s.title; el.querySelector(`#body${i}`).value = s.body;
-    el.querySelector('.title-input').oninput = e => { state.slides[i].title = e.target.value; update(); };
+    el.querySelector('.title-input').oninput = e => { headingEditor?.recordTitle(state.slides[i]); state.slides[i].title = e.target.value; update(); };
     el.querySelector(`#body${i}`).oninput = e => { state.slides[i].body = e.target.value; update(); };
     el.onfocusin = () => setPage(i); $('#fields').append(el);
   });
@@ -175,12 +176,13 @@ function photoLayer(model, index) {
   return {type:'image',id:r?.id||'primary-photo',x:r?r.x:80+(920-w)*p.x/100,y:r?r.y:220+(940-h)*p.y/100,w,h,crop,iw:image.width,ih:image.height,data:p.data};
 }
 function scene(model, index) {
-  const s = model.slides[index], family = fontFor(model), items = [], warnings = [];
+  const s = model.slides[index], family = fontFor(model), items = [], warnings = []; let headingBox;
   const rect = (x, y, w, h, fill, extra = {}) => items.push({type: 'rect', x, y, w, h, fill, ...extra});
   const line = (x1, y1, x2, y2, stroke, strokeWidth = 1) => items.push({type: 'line', x1, y1, x2, y2, stroke, strokeWidth});
   const circle = (cx, cy, r, fill, opacity = 1) => items.push({type: 'circle', cx, cy, r, fill, opacity});
   const text = (value, x, y, size, color = model.fg, align = 'left', weight = 400, useFamily = family) => items.push({type: 'text', value, x, y, size, color, align, weight, family: useFamily});
   function block(value, x, y, width, height, requested, align, title = false) {
+    if(title&&s.headingLayer){headingBox=s.headingLayer;return;}
     const minSize = title ? 30 : 24, weight = model.font === 'bold' || title ? 600 : 400;
     let size = requested, rows;
     while (true) {
@@ -191,7 +193,8 @@ function scene(model, index) {
     const capacity = Math.max(1, Math.floor(height / (size * 1.55)));
     if (rows.length > capacity) { warnings.push(title ? '見出し' : '本文'); rows = rows.slice(0, capacity); const tail = rows.length - 1; rows[tail] = rows[tail].slice(0, -1) + '…'; }
     const anchor = align === 'center' ? x + width / 2 : align === 'right' ? x + width : x;
-    rows.forEach((row, i) => text(row, anchor, y + size + i * size * 1.55, size, model.fg, align, weight));
+    if(title)headingBox=TsumuguHeading.create({x,y,width,height,size,weight,align,font:model.font==='serif'?'serif':'sans',color:model.fg});
+    rows.forEach((row, i) => {text(row, anchor, y + size + i * size * 1.55, size, model.fg, align, weight);if(title)items[items.length-1].heading=true;});
   }
   rect(0, 0, 1080, 1350, model.bg);
   const freePhoto=s.photo?.placement,photoItem=photoLayer(model,index);
@@ -236,9 +239,13 @@ function scene(model, index) {
   line(100, 1200, 980, 1200, model.accent);
   text(model.account, 100, 1255, 24, model.fg);
   text(index === 6 ? '保存して、またゆっくり。' : 'つづきを読む  →', 980, 1255, 23, model.fg, 'right');
-  return {items, warnings};
+  let headingOverflow=false;
+  if(s.headingLayer){const layout=TsumuguHeading.layout(measure,s.title,s.headingLayer),item={type:'richText',style:s.headingLayer,layout};headingOverflow=layout.overflow;if(layout.overflow)warnings.push('自由編集の見出し');if(s.headingLayer.stack==='back')items.splice(1,0,item);else items.push(item);}
+  return {items, warnings, headingBox, headingOverflow};
 }
 function draw(canvas, model, index) {
+  // Detached export canvases do not inherit <html lang>; use the preview's language.
+  canvas.lang = document.documentElement.lang || 'ja';
   const ctx = canvas.getContext('2d'), built = scene(model, index);
   ctx.clearRect(0, 0, 1080, 1350);
   for (const item of built.items) {
@@ -254,6 +261,8 @@ function draw(canvas, model, index) {
       ctx.strokeStyle = item.stroke; ctx.lineWidth = item.strokeWidth; ctx.stroke(new Path2D(item.d));
     } else if (item.type === 'text') {
       ctx.fillStyle = item.color; ctx.textAlign = item.align; ctx.font = `${item.weight} ${item.size}px ${item.family}`; ctx.fillText(item.value, item.x, item.y);
+    } else if (item.type === 'richText') {
+      TsumuguHeading.draw(ctx,item);
     } else if (item.type === 'image') {
       const img = images.get(item.data); if (img) ctx.drawImage(img, item.crop.sx,item.crop.sy,item.crop.sw,item.crop.sh,item.x, item.y, item.w, item.h);
     }
@@ -267,9 +276,9 @@ function render(live = false) {
     draw(button.querySelector('canvas'), state, i); button.classList.toggle('active', i === current); button.setAttribute('aria-pressed', i === current);
   });
   $('#pageLabel').textContent = `${String(current + 1).padStart(2, '0')} / 07　${names[current]}`;
-  photoEditor?.sync();
+  photoEditor?.sync(); headingEditor?.sync();
   $('#layoutWarning').hidden = !built.warnings.length;
-  $('#layoutWarning').textContent = `${built.warnings.join('・')}が収まらないため、一部を「…」で表示しています。文章を短くするか、写真を外してください。`;
+  $('#layoutWarning').textContent = built.headingOverflow?'自由編集の見出しが枠に収まりません。枠を広げるか、文字サイズ・行間・文章量を調整してください。出力では枠外を切り取ります。':`${built.warnings.join('・')}が収まらないため、一部を「…」で表示しています。文章を短くするか、写真を外してください。`;
 }
 async function imageFrom(data) {
   if (images.has(data)) return images.get(data);
@@ -389,6 +398,7 @@ function svg(model, i) {
   const built = scene(model, i);
   const elements = built.items.map(item => {
     const opacity = item.opacity !== undefined ? ` opacity="${item.opacity}"` : '';
+    if (item.type === 'richText') return TsumuguHeading.svg(item,xml);
     if (item.type === 'rect') return `<rect x="${item.x}" y="${item.y}" width="${item.w}" height="${item.h}" fill="${item.fill}"${item.stroke ? ` stroke="${item.stroke}" stroke-width="${item.strokeWidth}"` : ''}/>`;
     if (item.type === 'circle') return `<circle cx="${item.cx}" cy="${item.cy}" r="${item.r}" fill="${item.fill}"${opacity}/>`;
     if (item.type === 'line') return `<line x1="${item.x1}" y1="${item.y1}" x2="${item.x2}" y2="${item.y2}" stroke="${item.stroke}" stroke-width="${item.strokeWidth}"/>`;
@@ -421,7 +431,7 @@ async function exportImages(format, all) {
     const model = clone(state), selected = current; await prepareImages(model);
     const indexes = all ? [0, 1, 2, 3, 4, 5, 6] : [selected];
     const overflow = indexes.filter(i => scene(model, i).warnings.length);
-    if (overflow.length && !await confirmAction(`${overflow.map(i => i + 1).join('・')}枚目に収まらない文章があります。「…」で省略したまま保存しますか？文章を短くすると全文を表示できます。`, '文章の長さを確認')) return;
+    if (overflow.length && !await confirmAction(`${overflow.map(i => i + 1).join('・')}枚目に収まらない文章があります。省略、または文字枠の外を切り取った状態で保存しますか？文章を短くすると全文を表示できます。`, '文章の長さを確認')) return;
     const files = [];
     for (const i of indexes) {
       const blob = format !== 'svg' ? await png(model, i, format) : new Blob([svg(model, i)], {type: 'image/svg+xml;charset=utf-8'});
@@ -433,7 +443,8 @@ async function exportImages(format, all) {
   finally { exporting = false; controls.forEach(s => $(s).disabled = false); }
 }
 function bind() {
-  photoEditor=TsumuguPhotoLayout.editor({photo:()=>state.slides[current].photo,key:()=>AccountWorkspace.currentId+':'+current,geometry:()=>photoLayer(state,current),crop:()=>{const p=state.slides[current].photo,img=images.get(p.data);return TsumuguImageTools.crop(img.width,img.height,p.framing);},change:update,blocked:()=>exporting||pendingFeedLoads>0});
+  photoEditor=TsumuguPhotoLayout.editor({photo:()=>state.slides[current].photo,key:()=>AccountWorkspace.currentId+':'+current,geometry:()=>photoLayer(state,current),crop:()=>{const p=state.slides[current].photo,img=images.get(p.data);return TsumuguImageTools.crop(img.width,img.height,p.framing);},change:update,select:()=>headingEditor?.deselect(),blocked:()=>exporting||pendingFeedLoads>0||headingEditor?.busy()});
+  headingEditor=TsumuguHeading.editor({photo:()=>photoLayer(state,current),slide:()=>state.slides[current],key:()=>AccountWorkspace.currentId+':'+current,geometry:()=>scene(state,current).headingBox,hits:()=>{const built=scene(state,current);if(state.slides[current].headingLayer)return TsumuguHeading.layout(measure,state.slides[current].title,state.slides[current].headingLayer).hits;return built.items.filter(i=>i.heading).map(i=>{measure.font=`${i.weight} ${i.size}px ${i.family}`;const width=measure.measureText(i.value).width;return {x:i.x-(i.align==='center'?width/2:i.align==='right'?width:0),y:i.y-i.size,width:Math.max(12,width),height:i.size*1.2};});},change:update,select:()=>photoEditor?.resetSelection(),contentSync:()=>{$('#title'+current).value=state.slides[current].title;},blocked:()=>exporting||pendingFeedLoads>0||photoEditor?.busy()});
   fields();
   ['theme', 'concept', 'account'].forEach(k => $('#' + k).oninput = e => {
     state[k] = e.target.value;
@@ -513,7 +524,7 @@ async function boot() {
   bind(); syncGlobalControls(); syncPageControls(); render(); $('.editor').inert = false;
   await persist();
   AccountWorkspace.register('feed', {
-    flush, busy: () => exporting || pendingFeedLoads > 0 || photoEditor?.busy(),
+    flush, busy: () => exporting || pendingFeedLoads > 0 || photoEditor?.busy() || headingEditor?.busy(),
     prepare: prepareFeedAccount, activate: activateFeedAccount,
     snapshot: () => ({id: 'autosave', state: clone(state), updated: Date.now()}),
     open: record => replaceState(record.state), validate: record => normalize(record.state)

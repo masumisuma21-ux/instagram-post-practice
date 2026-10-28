@@ -131,6 +131,7 @@
     scenes.forEach(s => {
       if (!s || (ns === 'feed' ? typeof s.title !== 'string' || typeof s.body !== 'string' : typeof s.caption !== 'string' || typeof s.narration !== 'string' || !Number.isFinite(s.seconds) || s.seconds < .5 || s.seconds > 60)) throw Error('文章・秒数の形式が違います。');
       if(ns==='feed'&&s.photo)for(const k of ['placement','placementReset'])if(s.photo[k]!==undefined&&!TsumuguPhotoLayout.valid(s.photo[k]))throw Error('写真配置の形式・範囲を確認してください。');
+      if(ns==='feed'&&s.headingLayer!==undefined&&!TsumuguHeading.valid(s.headingLayer))throw Error('見出し設定の形式・範囲を確認してください。');
       const framing=ns==='feed'?s.photo?.framing:s.framing;
       if(framing){for(const [k,min,max] of [['zoom',1,3],['x',0,100],['y',0,100]])if(framing[k]!==undefined&&(!Number.isFinite(framing[k])||framing[k]<min||framing[k]>max))throw Error('切り抜き設定の範囲を確認してください。');if(framing.aspect!==undefined&&!['original','4:5','9:16','1:1'].includes(framing.aspect))throw Error('写真の比率を確認してください。');}
       if(s.imageStyle!==undefined&&!Object.hasOwn(TsumuguImageTools.styles,s.imageStyle))throw Error('写真スタイルを確認してください。');
