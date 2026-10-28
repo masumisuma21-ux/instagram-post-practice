@@ -6,7 +6,17 @@ function valid(s){return !!s&&s.version===1&&s.id==='primary-heading'&&s.type===
 function create(v){const s={version:1,id:'primary-heading',type:'text',source:'title',stack:'front',font:'sans',weight:600,align:'left',color:'#435445',background:'#ffffff',shadow:false,size:72,lineHeight:1.55,spacing:0,opacity:1,backgroundOpacity:0,...v};if(!valid(s))throw Error('見出し設定の形式・範囲を確認してください。');return s;}
 const family=s=>s.font==='serif'?'JPSerif':'JP';
 function bound(s){return {...s,x:clamp(s.x,24-s.width,W-24),y:clamp(s.y,24-s.height,H-24)};}
-function resize(s,corner,dx,dy){const west=corner.includes('w'),north=corner.includes('n'),width=clamp(s.width+(west?-dx:dx),40,2000),height=clamp(s.height+(north?-dy:dy),40,1800);return bound({...s,width,height,x:west?s.x+s.width-width:s.x,y:north?s.y+s.height-height:s.y});}
+function resize(s,corner,dx,dy){
+ const west=corner.includes('w'),north=corner.includes('n');
+ // Side handles reflow text without changing its size or the frame height.
+ if(corner==='w'||corner==='e'){const width=clamp(s.width+(west?-dx:dx),40,2000);return bound({...s,width,x:west?s.x+s.width-width:s.x});}
+ // Project the dragged corner onto the original diagonal; keep the opposite
+ // corner fixed and scale frame, font and pixel tracking together.
+ const min=Math.max(40/s.width,40/s.height,16/s.size),max=Math.min(2000/s.width,1800/s.height,180/s.size,s.spacing>0?30/s.spacing:s.spacing<0?-2/s.spacing:Infinity);
+ const factor=clamp(1+((west?-dx:dx)*s.width+(north?-dy:dy)*s.height)/(s.width*s.width+s.height*s.height),min,max),width=clamp(s.width*factor,40,2000),height=clamp(s.height*factor,40,1800);
+ // Clamp products too: floating-point rounding at a limit must not invalidate saved data.
+ return bound({...s,width,height,size:clamp(s.size*factor,16,180),spacing:clamp(s.spacing*factor,-2,30),x:west?s.x+s.width-width:s.x,y:north?s.y+s.height-height:s.y});
+}
 const segments=t=>typeof Intl.Segmenter==='function'?[...new Intl.Segmenter('ja',{granularity:'grapheme'}).segment(t)].map(x=>x.segment):[...t];
 function layout(ctx,text,s){
  ctx.font=`${s.weight} ${s.size}px ${family(s)}`;const rows=[];
