@@ -372,12 +372,28 @@
     "exactPagesAllowlistUiAndLazyImports": "PASS",
     "newUiCancelDoubleClickDownloadAccountAndAssetHashes": "PASS"
   },
-  "publicationRecommendation": "WAIT for Windows Chrome and Edge native H264/AAC real-device validation",
+  "publicationRecommendation": "Approved by user on 2026-10-30 as Windows-PC experimental feature; mobile/Safari/Firefox MP4 unverified",
   "knownLimits": [
     "60 seconds project duration / 100 MiB output",
     "HDR unsupported",
     "MP4 container can include trailing AAC padding up to about 21.33 ms",
     "Native paused preview may differ by one frame at exact frame boundaries",
     "Native Windows AAC and high-resolution real footage not verified"
-  ]
+  ],
+  "userWindowsReport": {
+    "dateJapan": "2026-10-30",
+    "browsers": [
+      "Chrome",
+      "Edge"
+    ],
+    "versions": null,
+    "reportedSuccess": [
+      "two video imports",
+      "cut and caption editing",
+      "continuous preview",
+      "MP4 download",
+      "playback with video/audio/captions"
+    ],
+    "source": "user report; not agent-operated Windows testing"
+  }
 }
