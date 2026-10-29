@@ -9,3 +9,5 @@
 #videoWorkspace{overflow-anchor:none}
 
 .vc-handle.n{left:50%;top:0;cursor:ns-resize}.vc-handle.s{left:50%;top:100%;cursor:ns-resize}
+
+.mp4-panel{border-top:1px solid #dce2d6;margin-top:20px;padding-top:12px}.mp4-panel progress{width:100%}#vMp4Player{display:block;width:100%;max-width:270px;aspect-ratio:9/16;background:#252b27;margin:12px 0}#vMp4Download{display:inline-block;padding:10px 0}

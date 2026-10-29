@@ -9,6 +9,8 @@ let timeline,trimGesture=false,sourcePosition=0,pendingSource=null,sourceTask=nu
 let captionEditor,captionGesture=false,captionSession=0,captionSeekFrame=0,captionSeekTarget=null;
 const mediaWaits=new Set();
 function cancelMediaWaits(){for(const cancel of [...mediaWaits])cancel();}
+let mp4Task=null,mp4Controller=null,mp4URL=null,mp4Module;
+function clearMp4Result(){if(mp4URL){q('vMp4Player')?.pause();q('vMp4Player')?.removeAttribute('src');q('vMp4Player')?.load();URL.revokeObjectURL(mp4URL);mp4URL=null;}if(q('vMp4Result'))q('vMp4Result').hidden=true;}
 const player=q('vPlayer'),store=(op,value,id=AccountWorkspace.currentId)=>AccountWorkspace.store('video',op,value,id);
 function status(text,error=false){q('vStatus').textContent=text;q('vStatus').classList.toggle('error',error);}
 function currentRecord(){return {id:'current',version:1,kind:'project',name:project.name,project:copy(project),updated:Date.now()};}
@@ -18,7 +20,7 @@ function offset(index){return project.cuts.slice(0,index).reduce((s,c)=>s+c.end-
 function materialURL(id){if(!urls.has(id)){const a=assets.get(id);if(!a)throw Error('このカットの素材がありません。バックアップから復元してください。');urls.set(id,URL.createObjectURL(a.blob));}return urls.get(id);}
 function pause(){pendingSource=null;token++;cancelMediaWaits();loading=false;playing=false;cancelAnimationFrame(raf);player.pause();q('vPlay').textContent='▷ 再生';}
 function pauseForEdit(){if(playing||!loading)pause();else player.pause();}
-function resetMedia(){pause();token++;loading=false;player.removeAttribute('src');player.load();for(const u of urls.values())URL.revokeObjectURL(u);urls.clear();}
+function resetMedia(){clearMp4Result();pause();token++;loading=false;player.removeAttribute('src');player.load();for(const u of urls.values())URL.revokeObjectURL(u);urls.clear();}
 function clock(){q('vSeek').max=V.total(project);q('vSeek').value=position;q('vTime').textContent=`${seconds(position)} / ${seconds(V.total(project))} 秒`;q('vTotal').textContent=`${project.cuts.length}カット ・ 合計${seconds(V.total(project))}秒`;timeline?.sync();captionEditor?.sync();}
 function paint(){const c=cut(),a=c&&assets.get(c.assetId);q('vEmpty').hidden=!!a;if(!a)return;const r=V.crop(a.width,a.height,c.crop);player.style.width=r.width/1080*100+'%';player.style.height=r.height/1920*100+'%';player.style.left=r.x/1080*100+'%';player.style.top=r.y/1920*100+'%';}
 function waitMedia(event,action,timeout=12000){return new Promise((resolve,reject)=>{let timer;const cleanup=()=>{clearTimeout(timer);player.removeEventListener(event,ok);player.removeEventListener('error',bad);mediaWaits.delete(cancel);},ok=()=>{cleanup();resolve();},bad=()=>{cleanup();reject(Error('このブラウザで動画を再生できません。H.264 / SDRのMP4をお試しください。'));},cancel=()=>{cleanup();reject(new DOMException('seek cancelled','AbortError'));};mediaWaits.add(cancel);player.addEventListener(event,ok,{once:true});player.addEventListener('error',bad,{once:true});timer=setTimeout(bad,timeout);try{action();}catch(e){cleanup();reject(e);}});}
@@ -37,7 +39,7 @@ function previewSource(value){
  }} )().finally(()=>{sourceTask=null;if(pendingSource){const r=pendingSource;pendingSource=null;if(r.owner===AccountWorkspace.currentId&&cut()?.id===r.cutId)previewSource(r.time);}});}
 }
 function beginTrim(){if(busy||trimGesture||captionGesture||AccountWorkspace.busy||!cut())return null;const before={owner:AccountWorkspace.currentId,cutId:cut().id,project:copy(project),dirty,source:sourcePosition};pauseForEdit();clearTimeout(timer);trimGesture=true;return before;}
-function rangeTrim(start,end,edge){const next=copy(project);next.cuts[selected].start=start;next.cuts[selected].end=end;try{V.validateBundle([...assets.values(),{...currentRecord(),project:next}]);}catch(e){status(e.message,true);renderSelection();return;}project=next;revision++;dirty=true;status('トリミング中…ハンドルを離すと保存します。');renderSelection();renderCuts();previewSource(edge==='start'?start:end);}
+function rangeTrim(start,end,edge){clearMp4Result();const next=copy(project);next.cuts[selected].start=start;next.cuts[selected].end=end;try{V.validateBundle([...assets.values(),{...currentRecord(),project:next}]);}catch(e){status(e.message,true);renderSelection();return;}project=next;revision++;dirty=true;status('トリミング中…ハンドルを離すと保存します。');renderSelection();renderCuts();previewSource(edge==='start'?start:end);}
 function endTrim(cancelled,before){trimGesture=false;if(before.owner!==AccountWorkspace.currentId||cut()?.id!==before.cutId)return;
  if(cancelled){project=before.project;dirty=before.dirty;revision++;render();previewSource(before.source);status(dirty?'操作を取り消しました。以前の未保存の編集を保存します。':'操作を取り消しました。保存内容は変更していません。');}
  if(dirty)flush();
@@ -63,7 +65,7 @@ player.addEventListener('error',()=>{if(player.getAttribute('src')){pause();stat
 function renderSelection(){const c=cut();q('vSelected').hidden=!c;if(!c){timeline?.sync();return;}const a=assets.get(c.assetId);q('vCutTitle').textContent=`カット${selected+1}：${a?.name||'素材なし'} ・ ${seconds(c.end-c.start)}秒`;for(const[id,value]of Object.entries({vStart:c.start,vEnd:c.end,vFit:c.crop.fit,vX:c.crop.x,vY:c.crop.y,vZoom:c.crop.zoom}))if(document.activeElement!==q(id))q(id).value=value;q('vStart').max=c.end-.1;q('vEnd').max=a?.duration||300;q('vZoomValue').textContent=c.crop.zoom.toFixed(2)+'倍';timeline?.sync();}
 function button(text,fn){const b=document.createElement('button');b.type='button';b.textContent=text;b.onclick=fn;return b;}
 function attempt(fn){if(busy||trimGesture||captionGesture||AccountWorkspace.busy)return;const previous=selected;pauseForEdit();try{fn();}catch(e){selected=Math.min(previous,Math.max(0,project.cuts.length-1));status(e.message,true);render();if(cut()){q('vStart').value=cut().start;q('vEnd').value=cut().end;}}}
-function edit(fn,structural=true){const next=copy(project);fn(next);V.validateBundle([...assets.values(),{...currentRecord(),project:next}]);project=next;revision++;dirty=true;status('保存待ち…');clearTimeout(timer);timer=setTimeout(()=>flush(),600);if(structural)render();else{renderSelection();paint();clock();}}
+function edit(fn,structural=true){clearMp4Result();const next=copy(project);fn(next);V.validateBundle([...assets.values(),{...currentRecord(),project:next}]);project=next;revision++;dirty=true;status('保存待ち…');clearTimeout(timer);timer=setTimeout(()=>flush(),600);if(structural)render();else{renderSelection();paint();clock();}}
 function addCut(id){if(busy||trimGesture||captionGesture)return;attempt(()=>edit(p=>{const a=assets.get(id);if(!a)throw Error('素材を確認してください。');p.cuts.push({id:uid('cut-'),assetId:id,start:0,end:a.duration,crop:{fit:'cover',zoom:1,x:50,y:50},captions:[]});selected=p.cuts.length-1;}));seek(offset(selected));}
 function reorder(from,to){attempt(()=>{if(from===to||to<0||to>=project.cuts.length)return;edit(p=>{const [c]=p.cuts.splice(from,1);p.cuts.splice(to,0,c);selected=to;});seek(offset(selected));});}
 function renderCuts(){const list=q('vCuts');list.replaceChildren();project.cuts.forEach((c,i)=>{const a=assets.get(c.assetId),row=document.createElement('article');row.className='video-cut'+(i===selected?' active':'');row.dataset.index=i;row.draggable=true;
@@ -91,7 +93,7 @@ async function importFiles(files){
  try{clearTimeout(timer);await queue;if(!await flush())throw Error('編集中の内容を保存できないため取り込みを中止しました。');if(files.length+assets.size>V.MAX_ASSETS)throw Error('素材は1アカウント30個までです。');if(project.cuts.length+files.length>V.MAX_CUTS)throw Error('カットは60個までです。');const bytes=files.reduce((s,f)=>s+f.size,0);if(bytes+[...assets.values()].reduce((s,a)=>s+a.bytes,0)>V.ACCOUNT_LIMIT)throw Error('動画素材の合計が50MiBを超えます。未使用素材を削除するか短い動画を選んでください。');const estimate=await navigator.storage?.estimate?.();if(estimate?.quota&&estimate.quota-estimate.usage<bytes*1.2)throw Error('ブラウザの推定空き容量が不足しています。元の保存データは変更していません。');
   const added=[];for(const f of files){status(`動画を確認中：${f.name}`);try{added.push(await inspect(f));}catch(e){throw Error(f.name+'：'+e.message+' 今回の取り込み全体を中止しました。');}q('vImportProgress').value=added.length;}
   const next=copy(project);for(const a of added)next.cuts.push({id:uid('cut-'),assetId:a.id,start:0,end:a.duration,crop:{fit:'cover',zoom:1,x:50,y:50},captions:[]});const record={...currentRecord(),project:next};V.validateBundle([...assets.values(),...added,record]);await queue;await store('batch',{put:[...added,record]});
-  for(const a of added)assets.set(a.id,a);project=next;selected=project.cuts.length-added.length;revision++;hasRecord=true;dirty=false;clearTimeout(timer);renderAssets();render();status('● 素材と編集情報をまとめて保存しました。');await refreshDrafts();await capacity();seek(offset(selected));
+  clearMp4Result();for(const a of added)assets.set(a.id,a);project=next;selected=project.cuts.length-added.length;revision++;hasRecord=true;dirty=false;clearTimeout(timer);renderAssets();render();status('● 素材と編集情報をまとめて保存しました。');await refreshDrafts();await capacity();seek(offset(selected));
  }catch(e){status(e.message+' 保存は完了していません。以前の保存内容は変更していません。',true);}
  finally{busy=false;q('vEdit').inert=false;q('vImportProgress').hidden=true;q('vFiles').value='';}
 }
@@ -124,10 +126,29 @@ if(globalThis.TsumuguVideoTimeline){timeline=TsumuguVideoTimeline.mount({get:()=
 const captionKey=()=>AccountWorkspace.currentId+':'+captionSession;
 function runCaptionSeek(){const r=captionSeekTarget;captionSeekTarget=null;captionSeekFrame=0;if(r&&r.key===captionKey())seek(Math.max(0,Math.min(V.total(project),r.time)));}
 function seekCaption(time){captionSeekTarget={key:captionKey(),time};cancelAnimationFrame(captionSeekFrame);captionSeekFrame=requestAnimationFrame(runCaptionSeek);}
-function changeCaptions(captions,live){try{const next=copy(project);next.captions=copy(captions);V.validateBundle([...assets.values(),{...currentRecord(),project:next}]);if(playing)pause();project=next;revision++;dirty=true;clearTimeout(timer);if(!captionGesture)timer=setTimeout(()=>flush(),600);status(live?'テロップを調整中…離すと保存します。':'保存待ち…');clock();return true;}catch(e){status(e.message,true);return false;}}
+function changeCaptions(captions,live){try{clearMp4Result();const next=copy(project);next.captions=copy(captions);V.validateBundle([...assets.values(),{...currentRecord(),project:next}]);if(playing)pause();project=next;revision++;dirty=true;clearTimeout(timer);if(!captionGesture)timer=setTimeout(()=>flush(),600);status(live?'テロップを調整中…離すと保存します。':'保存待ち…');clock();return true;}catch(e){status(e.message,true);return false;}}
 function beginCaption(){if(busy||trimGesture||captionGesture||AccountWorkspace.busy)return null;const before={captions:copy(project.captions),dirty,time:position,key:captionKey()};cancelAnimationFrame(captionSeekFrame);captionSeekFrame=0;captionSeekTarget=null;pauseForEdit();clearTimeout(timer);captionGesture=true;return before;}
 function endCaption(cancelled,before){captionGesture=false;if(before.key!==captionKey())return;if(cancelled){project={...project,captions:copy(before.captions)};dirty=before.dirty;revision++;clock();seekCaption(before.time);status('テロップ操作を取り消しました。');}if(captionSeekTarget){cancelAnimationFrame(captionSeekFrame);runCaptionSeek();}if(dirty)flush();}
 if(globalThis.TsumuguVideoCaptions&&q('vcPanel')&&q('vcCanvas')){captionEditor=TsumuguVideoCaptions.editor({get:()=>({project,total:V.total(project),time:position,visible:!!cut()&&!loading&&sourcePosition>=cut().start-.005&&sourcePosition<=cut().end+.005,key:captionKey()}),blocked:()=>busy||trimGesture||captionGesture||AccountWorkspace.busy,change:changeCaptions,begin:beginCaption,end:endCaption,seek:seekCaption,pause:()=>{if(playing)pause();},message:text=>status(text,true)});}else if(q('vcPanel')){q('vcPanel').textContent='テロップ機能を読み込めません。再読み込みしてください。';q('vcSafe').disabled=true;q('vcSafeGuide').hidden=true;}
+async function exportMp4(checkOnly=false){
+ if(mp4Task||busy||trimGesture||captionGesture||AccountWorkspace.busy)return;
+ if(!checkOnly&&!project.cuts.length){q('vMp4Status').textContent='先に動画を取り込んで、カットを追加してください。';return;}
+ const snap={owner:AccountWorkspace.currentId,project:copy(project),assets:[...assets.values()].map(copy)};
+ pause();clearTimeout(timer);busy=true;q('vEdit').inert=true;mp4Controller=new AbortController();
+ const controls=['feedMode','reelMode','videoMode','vMp4Audio','vMp4Export','vMp4Check'],prior=controls.map(id=>[q(id),q(id).disabled]);for(const[el]of prior)el.disabled=true;
+ q('vMp4Cancel').disabled=false;q('vMp4Progress').hidden=false;q('vMp4Progress').value=0;q('vMp4Status').classList.remove('error');q('vMp4Status').textContent='対応を診断中…';let fraction=0;
+ mp4Task=(async()=>{try{
+  mp4Module??=await import('./mp4-export/exporter.mjs');const {diagnose,resetDiagnosis}=await import('./mp4-export/diagnostics.mjs');if(checkOnly)resetDiagnosis();const support=await diagnose();
+  if(mp4Controller.signal.aborted)throw new DOMException('中止しました。','AbortError');
+  if(checkOnly){q('vMp4Status').textContent=[support.message,...support.issues].filter(Boolean).join('\n');return;}
+  clearMp4Result();const result=await mp4Module.renderMP4({...snap,audio:q('vMp4Audio').value,signal:mp4Controller.signal,progress:p=>{fraction=Math.max(fraction,p.fraction);q('vMp4Progress').value=fraction;q('vMp4Status').textContent=`${p.phase} ・ ${Math.floor(fraction*100)}%`;}});
+  if(mp4Controller.signal.aborted)throw new DOMException('中止しました。','AbortError');if(snap.owner!==AccountWorkspace.currentId)throw Error('アカウントが変わったため出力結果を表示しません。');
+  mp4URL=URL.createObjectURL(result.blob);q('vMp4Player').src=mp4URL;q('vMp4Download').href=mp4URL;q('vMp4Result').hidden=false;q('vMp4Download').click();q('vMp4Status').textContent=`MP4を作成し、ダウンロードを開始しました。${result.stats.frames}フレーム / ${result.stats.actualDuration.toFixed(2)}秒。下の動画で確認できます。保存が始まらない場合はダウンロードリンクを押してください。`;
+ }catch(e){q('vMp4Status').classList.toggle('error',e.name!=='AbortError');q('vMp4Status').textContent=e.name==='AbortError'?'書き出しを中止しました。編集内容と素材は保持しています。':e.message+' 編集内容と素材は保持しています。読み込みエラーの場合は再読み込みして再度お試しください。';}
+ finally{busy=false;mp4Task=null;mp4Controller=null;q('vEdit').inert=false;for(const[el,disabled]of prior)el.disabled=disabled;q('vMp4Cancel').disabled=true;q('vMp4Progress').hidden=true;if(dirty)timer=setTimeout(()=>flush(),600);}
+ })();await mp4Task;
+}
+if(q('vMp4Export')){q('vMp4Export').onclick=()=>exportMp4();q('vMp4Check').onclick=()=>exportMp4(true);q('vMp4Cancel').onclick=()=>{mp4Controller?.abort();q('vMp4Cancel').disabled=true;q('vMp4Status').textContent='中止しています…';};}
 const editor={prepare,activate,open,flush,snapshot,validate:V.validateRecord,busy:()=>busy||playing||loading||trimGesture||captionGesture||!!captionSeekFrame};
 AccountWorkspace.register('video',{...editor,busy:()=>true,snapshot:()=>null,flush:async()=>true});
 (async()=>{await AccountWorkspace.ready;try{const data=await prepare(AccountWorkspace.currentId);activate(data);AccountWorkspace.register('video',editor);q('videoMode').disabled=false;}catch(e){status('動画機能を開始できません。'+e.message+' 既存の投稿データは削除していません。',true);q('vEdit').inert=true;q('videoMode').disabled=false;AccountWorkspace.register('video',{...editor,prepare:async()=>null,activate:()=>{},snapshot:()=>null,flush:async()=>true,busy:()=>false});}})().catch(e=>status('動画機能の初期化に失敗しました。'+e.message,true));
