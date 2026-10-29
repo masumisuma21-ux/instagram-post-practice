@@ -1,0 +1,399 @@
+{
+  "dateJapan": "2026-10-29",
+  "baseMain": "5308bcd537253189fb0884c07fc1c7a292a458c8",
+  "branch": "feature/mp4-audio-export",
+  "nativeWindowsTested": false,
+  "nativeLinuxAac": "unsupported; UI rejects audio export explicitly",
+  "audioBackendUnderTest": "@mediabunny/aac-encoder 1.63.0 registered-local TEST ONLY; not shipped",
+  "environment": {
+    "OS": "Linux x86_64",
+    "browser": "Chromium 154.0.8037.57 headless",
+    "logicalCPUs": 3
+  },
+  "measurementNotes": [
+    "Synthetic 180x320/320x180 sources; not 1080p source benchmark",
+    "RSS is sampled process-tree sum with shared-page overcount and test overhead",
+    "60s measurement overlapped separate regression browsers; results are not statistical speed guarantees"
+  ],
+  "exports": [
+    {
+      "seconds": 16,
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "frames": 480,
+      "audioSamples": 768000,
+      "audioChannels": 2,
+      "audioRate": 48000,
+      "audioBackend": "registered-local",
+      "actualDuration": 16,
+      "renderMilliseconds": 6839.100000000093,
+      "wallMilliseconds": 9378,
+      "bytes": 15384137,
+      "rssBaseline": 931487744,
+      "rssSampledPeak": 1345503232,
+      "maxSampledJsHeap": 146029915,
+      "audioCuts": [
+        {
+          "cutId": "c1",
+          "startSample": 0,
+          "endSample": 240000,
+          "silent": false,
+          "sourceFrames": 240000
+        },
+        {
+          "cutId": "c2",
+          "startSample": 240000,
+          "endSample": 336000,
+          "silent": true,
+          "sourceFrames": 0
+        },
+        {
+          "cutId": "c3",
+          "startSample": 336000,
+          "endSample": 768000,
+          "silent": false,
+          "sourceFrames": 396900
+        }
+      ]
+    },
+    {
+      "seconds": 36,
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "frames": 1080,
+      "audioSamples": 1728000,
+      "audioChannels": 2,
+      "audioRate": 48000,
+      "audioBackend": "registered-local",
+      "actualDuration": 36.010666666666665,
+      "renderMilliseconds": 14228.799999999814,
+      "wallMilliseconds": 17644,
+      "bytes": 33328083,
+      "rssBaseline": 1283960832,
+      "rssSampledPeak": 1648480256,
+      "maxSampledJsHeap": 190822401,
+      "audioCuts": [
+        {
+          "cutId": "c1",
+          "startSample": 0,
+          "endSample": 480000,
+          "silent": false,
+          "sourceFrames": 441000
+        },
+        {
+          "cutId": "c2",
+          "startSample": 480000,
+          "endSample": 1632000,
+          "silent": false,
+          "sourceFrames": 1152000
+        },
+        {
+          "cutId": "c3",
+          "startSample": 1632000,
+          "endSample": 1728000,
+          "silent": true,
+          "sourceFrames": 0
+        }
+      ]
+    },
+    {
+      "seconds": 60,
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "frames": 1800,
+      "audioSamples": 2880000,
+      "audioChannels": 2,
+      "audioRate": 48000,
+      "audioBackend": "registered-local",
+      "actualDuration": 60.010666666666665,
+      "renderMilliseconds": 42544.19999999972,
+      "wallMilliseconds": 49044,
+      "bytes": 55690160,
+      "rssBaseline": 890470400,
+      "rssSampledPeak": 1515036672,
+      "maxSampledJsHeap": 142596500,
+      "audioCuts": [
+        {
+          "cutId": "c1",
+          "startSample": 0,
+          "endSample": 768000,
+          "silent": false,
+          "sourceFrames": 705600
+        },
+        {
+          "cutId": "c2",
+          "startSample": 768000,
+          "endSample": 2496000,
+          "silent": false,
+          "sourceFrames": 1728000
+        },
+        {
+          "cutId": "c3",
+          "startSample": 2496000,
+          "endSample": 2880000,
+          "silent": true,
+          "sourceFrames": 0
+        }
+      ]
+    }
+  ],
+  "independentAudioAnalysis": [
+    {
+      "seconds": 16,
+      "formatDuration": 16.0,
+      "videoDuration": 16.0,
+      "audioDuration": 16.0,
+      "parts": [
+        {
+          "cut": "c1",
+          "startSample": 0,
+          "endSample": 240000,
+          "silent": false,
+          "rms": [
+            0.137377068400383,
+            0.06864211708307266
+          ],
+          "referenceRms": [
+            0.13749420642852783,
+            0.06872319430112839
+          ],
+          "gainDifferenceDb": [
+            -0.0074029164388775826,
+            -0.010253269225358963
+          ]
+        },
+        {
+          "cut": "c2",
+          "startSample": 240000,
+          "endSample": 336000,
+          "silent": true,
+          "rms": [
+            0.0,
+            0.0
+          ],
+          "referenceRms": [
+            0.0,
+            0.0
+          ],
+          "gainDifferenceDb": null
+        },
+        {
+          "cut": "c3",
+          "startSample": 336000,
+          "endSample": 768000,
+          "silent": false,
+          "rms": [
+            0.15860305726528168,
+            0.15860305726528168
+          ],
+          "referenceRms": [
+            0.15868616104125977,
+            0.15868616104125977
+          ],
+          "gainDifferenceDb": [
+            -0.004549873992800713,
+            -0.004549873992800713
+          ]
+        }
+      ],
+      "maximumPulseEnvelopeLagMs": 0,
+      "maximumAvFlashOffsetMs": 19.66666666666761,
+      "imageChecks": [
+        {
+          "time": 0.0,
+          "psnr": 37.86726809142815
+        },
+        {
+          "time": 0.6,
+          "psnr": 46.79022372524833
+        },
+        {
+          "time": 1.0,
+          "psnr": 38.588861416352024
+        },
+        {
+          "time": 1.5,
+          "psnr": 46.96137364999066
+        },
+        {
+          "time": 10.0,
+          "psnr": 38.42274536696586
+        },
+        {
+          "time": 10.5,
+          "psnr": 37.83649680322578
+        },
+        {
+          "time": 4.5,
+          "psnr": 45.92684283394597
+        },
+        {
+          "time": 5.0,
+          "psnr": 51.22674464248327
+        },
+        {
+          "time": 5.5,
+          "psnr": 40.61325994482979
+        },
+        {
+          "time": 7.0,
+          "psnr": 38.887240626215146
+        },
+        {
+          "time": 9.5,
+          "psnr": 38.1720623081317
+        }
+      ]
+    },
+    {
+      "seconds": 36,
+      "formatDuration": 36.010667,
+      "videoDuration": 36.0,
+      "audioDuration": 36.010667,
+      "parts": [
+        {
+          "cut": "c1",
+          "startSample": 0,
+          "endSample": 480000,
+          "silent": false,
+          "rms": [
+            0.1583392471075058,
+            0.1583392471075058
+          ],
+          "referenceRms": [
+            0.15844008326530457,
+            0.15844008326530457
+          ],
+          "gainDifferenceDb": [
+            -0.005529967602342367,
+            -0.005529967602342367
+          ]
+        },
+        {
+          "cut": "c2",
+          "startSample": 480000,
+          "endSample": 1632000,
+          "silent": false,
+          "rms": [
+            0.13491939008235931,
+            0.06739451736211777
+          ],
+          "referenceRms": [
+            0.13496416807174683,
+            0.06743428856134415
+          ],
+          "gainDifferenceDb": [
+            -0.002882104367017746,
+            -0.005124344490468502
+          ]
+        },
+        {
+          "cut": "c3",
+          "startSample": 1632000,
+          "endSample": 1728000,
+          "silent": true,
+          "rms": [
+            0.0,
+            0.0
+          ],
+          "referenceRms": [
+            0.0,
+            0.0
+          ],
+          "gainDifferenceDb": null
+        }
+      ],
+      "maximumPulseEnvelopeLagMs": 0,
+      "maximumAvFlashOffsetMs": 19.66666666666761,
+      "imageChecks": [
+        {
+          "time": 0.0,
+          "psnr": 37.834055397548816
+        },
+        {
+          "time": 0.6,
+          "psnr": 38.29595615511246
+        },
+        {
+          "time": 1.0,
+          "psnr": 38.44024908019444
+        },
+        {
+          "time": 1.5,
+          "psnr": 38.055084341012474
+        },
+        {
+          "time": 10.0,
+          "psnr": 38.33983116150799
+        },
+        {
+          "time": 10.5,
+          "psnr": 46.96856407206745
+        },
+        {
+          "time": 34.0,
+          "psnr": 82.44444125026897
+        },
+        {
+          "time": 4.5,
+          "psnr": 37.23181521317676
+        },
+        {
+          "time": 5.0,
+          "psnr": 38.41287180228205
+        },
+        {
+          "time": 5.5,
+          "psnr": 38.30623369684295
+        },
+        {
+          "time": 7.0,
+          "psnr": 39.0187986404729
+        },
+        {
+          "time": 9.5,
+          "psnr": 37.46259756135363
+        }
+      ]
+    }
+  ],
+  "regressions": {
+    "pngFullRgbaCases": 42,
+    "pngMismatches": 0,
+    "captionsAndTrimMouseTouch": "PASS",
+    "accountsMigrationFailureAndJson": "PASS",
+    "feed7Reel5CapCut": "PASS",
+    "photoHeadingBodyMouseTouchAndOutputs": "PASS",
+    "full52SecondVideoImportPlaybackAndRestore": "PASS",
+    "imagePersistenceSevenFeedFiveReel": "PASS",
+    "exactPagesAllowlistUiAndLazyImports": "PASS",
+    "newUiCancelDoubleClickDownloadAccountAndAssetHashes": "PASS"
+  },
+  "publicationRecommendation": "Approved by user on 2026-10-30 as Windows-PC experimental feature; mobile/Safari/Firefox MP4 unverified",
+  "knownLimits": [
+    "60 seconds project duration / 100 MiB output",
+    "HDR unsupported",
+    "MP4 container can include trailing AAC padding up to about 21.33 ms",
+    "Native paused preview may differ by one frame at exact frame boundaries",
+    "Native Windows AAC and high-resolution real footage not verified"
+  ],
+  "userWindowsReport": {
+    "dateJapan": "2026-10-30",
+    "browsers": [
+      "Chrome",
+      "Edge"
+    ],
+    "versions": null,
+    "reportedSuccess": [
+      "two video imports",
+      "cut and caption editing",
+      "continuous preview",
+      "MP4 download",
+      "playback with video/audio/captions"
+    ],
+    "source": "user report; not agent-operated Windows testing"
+  }
+}
