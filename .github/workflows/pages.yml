@@ -21,7 +21,7 @@ jobs:
       - name: Prepare only website files
         run: |
           mkdir -p _site/mp4-export _site/vendor/mp4
-          cp index.html video-captions.js video-timeline.js video-model.js video-editor.js video-editor.css feed-heading-editor.js feed-heading-editor.css feed-photo-editor.js feed-photo-editor.css image-tools.js accounts.js accounts.css style.css app.js reels.js reels.css reel-script-templates.js sans.woff serif.woff FONT-LICENSE.txt .nojekyll _site/
+          cp product-plan-model.js product-plan-editor.js product-plan.css index.html video-captions.js video-timeline.js video-model.js video-editor.js video-editor.css feed-heading-editor.js feed-heading-editor.css feed-photo-editor.js feed-photo-editor.css image-tools.js accounts.js accounts.css style.css app.js reels.js reels.css reel-script-templates.js sans.woff serif.woff FONT-LICENSE.txt .nojekyll _site/
           cp mp4-export/exporter.mjs mp4-export/audio.mjs mp4-export/diagnostics.mjs _site/mp4-export/
           cp vendor/mp4/mediabunny-1.63.0.min.mjs vendor/mp4/MEDIABUNNY-LICENSE.txt vendor/mp4/NOTICE.md _site/vendor/mp4/
       - uses: actions/configure-pages@v5

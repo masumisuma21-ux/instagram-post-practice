@@ -1,0 +1,14 @@
+.pp-panel {border:1px solid #d6ddcf;border-radius:14px;background:#faf9f4;margin-bottom:24px;overflow:hidden}
+.pp-panel summary {cursor:pointer;padding:18px;font-weight:700;color:#435445;min-height:48px}
+.pp-panel summary span {display:block;font-size:12px;font-weight:400;margin-top:6px}
+#ppEdit {padding:0 18px 18px}
+#ppEdit h3 {margin-top:24px}
+#ppEdit label {display:block;margin:14px 0 8px}
+#ppEdit input,#ppEdit select,#ppEdit textarea {width:100%;box-sizing:border-box}
+#ppEdit textarea {resize:vertical}
+.pp-cut {margin:16px 0;padding:16px;border:1px solid #deded3;border-radius:12px;background:white}
+.pp-cut h4 {margin:0 0 12px;color:#435445}
+.pp-notice {white-space:pre-line;font-size:13px;color:#695638;line-height:1.7}
+#ppStatus {padding:0 18px 14px;overflow-wrap:anywhere}
+#ppStatus.error {color:#9e342e}
+@media(max-width:600px){#ppEdit {padding:0 12px 12px}.pp-cut {padding:12px}#ppEdit button {min-height:44px}#ppEdit .two-col {grid-template-columns:1fr 1fr}}

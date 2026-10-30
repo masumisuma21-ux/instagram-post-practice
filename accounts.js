@@ -10,6 +10,7 @@
   const editors = new Map(), requiredEditors=['feed','reel'];
   const editorsReady=()=>requiredEditors.every(ns=>editors.has(ns));
   const videoSupport=()=>{if(!globalThis.TsumuguVideo)throw Error('動画対応ファイルを読み込めません。ページを再読み込みしてください。');return globalThis.TsumuguVideo;};
+  const planSupport=()=>{if(!globalThis.TsumuguProductPlans)throw Error('商品紹介構成案の対応ファイルを読み込めません。再読み込みしてください。');return globalThis.TsumuguProductPlans;};
   const includeVideo=()=>q('wIncludeVideo')?.checked!==false;
   const uid = () => 'brand-' + crypto.randomUUID();
   function message(text, error = false) { q('wStatus').textContent = text; q('wStatus').classList.toggle('error', error); }
@@ -23,7 +24,7 @@
   }
   const range = (id, ns) => ns ? IDBKeyRange.bound([id, ns, ''], [id, ns, '\uffff']) : IDBKeyRange.bound([id, '', ''], [id, '\uffff', '\uffff']);
   async function store(ns, op, value, id = currentId) {
-    if (!loaded || !id || !brands.some(b => b.id === id) || !['feed', 'reel', 'video'].includes(ns)) throw Error('制作アカウントを確認できません。');
+    if (!loaded || !id || !brands.some(b => b.id === id) || !['feed', 'reel', 'video', 'productPlan'].includes(ns)) throw Error('制作アカウントを確認できません。');
     try {
       const result = await transaction(['records'], ['get', 'all', 'getAll'].includes(op) ? 'readonly' : 'readwrite', tx => {
         const s = tx.objectStore('records');
@@ -126,6 +127,7 @@
   }
   function validateData(record, ns) {
     if (!record || typeof record.id !== 'string' || !record.id || record.id.length > 180) throw Error('投稿IDを確認してください。');
+    if(ns==='productPlan'){planSupport().validateRecord(record);return;}
     if(ns==='video'){videoSupport().validateRecord(record);return;}
     const model = ns === 'feed' ? record.state : record.value;
     if (ns === 'reel' && record.id.startsWith('template-')) { if (!record.style || typeof record.name !== 'string') throw Error('テンプレートの形式が違います。'); validateStyle(record.style, 'reel'); return; }
@@ -156,7 +158,8 @@
     value.accounts.forEach(group => {
       const b = validateBrand(group.brand); if (typeof b.id !== 'string' || !b.id || ids.has(b.id)) throw Error('アカウントIDが重複・欠落しています。'); ids.add(b.id);
       if (!Array.isArray(group.records)) throw Error('投稿一覧を確認できません。');
-      const keys = new Set(); group.records.forEach(r => { if (!['feed', 'reel', 'video'].includes(r.namespace) || r.accountId !== b.id || r.id !== r.record?.id) throw Error('アカウントIDと投稿の所属が一致しません。'); const key = r.namespace + ':' + r.id; if (keys.has(key)) throw Error('投稿IDが重複しています。'); keys.add(key); validateData(r.record, r.namespace); if (editors.has(r.namespace)) editors.get(r.namespace).validate(r.record); });
+      const keys = new Set(); group.records.forEach(r => { if (!['feed', 'reel', 'video', 'productPlan'].includes(r.namespace) || r.accountId !== b.id || r.id !== r.record?.id) throw Error('アカウントIDと投稿の所属が一致しません。'); const key = r.namespace + ':' + r.id; if (keys.has(key)) throw Error('投稿IDが重複しています。'); keys.add(key); validateData(r.record, r.namespace); if (editors.has(r.namespace)) editors.get(r.namespace).validate(r.record); });
+      if(group.records.filter(r=>r.namespace==='productPlan').length>101)throw Error('商品紹介の名前付き構成案は100件までです。');
       const videoRecords=group.records.filter(r=>r.namespace==='video').map(r=>r.record);if(videoRecords.length)videoSupport().validateBundle(videoRecords);
     });
     return value;
@@ -202,8 +205,8 @@
     if (!posts.length) { list.textContent = 'まだ保存した投稿はありません。編集をはじめるか、名前を付けて保存してください。'; return; }
     for (const r of posts) {
       const row = document.createElement('article'); row.className = 'w-post'; const title = document.createElement('b'), detail = document.createElement('span'), open = document.createElement('button');
-      title.textContent = r.record.name || (r.id === 'autosave' || r.id === 'current' ? '編集中の投稿（自動保存）' : '保存した投稿'); detail.textContent = r.namespace === 'feed' ? 'フィード・7枚' : r.namespace==='video'?'動画・可変カット':'リール・5シーン'; open.textContent = '開いて再編集';
-      open.onclick = async () => { if (currentId !== id) return; try { requireIdle(); if (!await confirmAction('現在の編集内容をこの投稿に切り替えます。残したい投稿は先に名前を付けて保存してください。')) return; switching = true; lockUI(true); if (!await flushEditors()) throw Error('現在の投稿を保存できません。切替を中止しました。'); const editor=editors.get(r.namespace);if(!editor)throw Error('動画機能を読み込めません。ページを再読み込みしてください。');await editor.open(r.record); q(r.namespace === 'feed' ? 'feedMode' : r.namespace==='video'?'videoMode':'reelMode').click(); q('wManager').hidden = true; q('wManage').setAttribute('aria-expanded', false); } catch (e) { message(e.message, true); } finally { switching = false; lockUI(false); } };
+      title.textContent = r.record.name || (r.id === 'autosave' || r.id === 'current' ? '編集中の投稿（自動保存）' : '保存した投稿'); detail.textContent = r.namespace === 'feed' ? 'フィード・7枚' : r.namespace==='video'?'動画・可変カット':r.namespace==='productPlan'?'商品紹介・構成案':'リール・5シーン'; open.textContent = '開いて再編集';
+      open.onclick = async () => { if (currentId !== id) return; try { requireIdle(); if (!await confirmAction('現在の編集内容をこの投稿に切り替えます。残したい投稿は先に名前を付けて保存してください。')) return; switching = true; lockUI(true); if (!await flushEditors()) throw Error('現在の投稿を保存できません。切替を中止しました。'); const editor=editors.get(r.namespace);if(!editor)throw Error('動画機能を読み込めません。ページを再読み込みしてください。');await editor.open(r.record); q(r.namespace === 'feed' ? 'feedMode' : ['video','productPlan'].includes(r.namespace)?'videoMode':'reelMode').click(); q('wManager').hidden = true; q('wManage').setAttribute('aria-expanded', false); } catch (e) { message(e.message, true); } finally { switching = false; lockUI(false); } };
       row.append(title, detail, open); list.append(row);
     }
   }
@@ -247,7 +250,7 @@
         switching = true; lockUI(true); if (!await flushEditors()) throw Error('保存に失敗しているため削除を中止しました。先にエクスポートしてください。');
         const next = brands.find(x => x.id !== id), prepared = await prepareAccount(next.id, next);
         await transaction(['brands', 'records', 'meta'], 'readwrite', tx => { tx.objectStore('brands').delete(id); const keys = tx.objectStore('records').getAllKeys(range(id)); keys.onsuccess = () => keys.result.forEach(k => tx.objectStore('records').delete(k)); tx.objectStore('meta').put({id: 'active', value: next.id}); });
-        for (const ns of ['feed', 'reel']) { try { localStorage.removeItem(recoveryKey(ns, id)); } catch {} }
+        for (const ns of ['feed', 'reel', 'productPlan']) { try { localStorage.removeItem(recoveryKey(ns, id)); } catch {} }
         brands = brands.filter(x => x.id !== id); currentId = next.id; activate(prepared); await renderPosts(); message('現在の保存領域から削除しました。移行元の旧データと外部のバックアップは残ります。');
       } catch (e) { message(e.message, true); } finally { switching = false; lockUI(false); }
     };
